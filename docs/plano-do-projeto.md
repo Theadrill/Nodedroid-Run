@@ -228,6 +228,35 @@ O `ProcessManager` injeta `GIT_EXEC_PATH=filesDir/git-core/` em todo processo, e
 
 Scripts shell (`#!/bin/sh`) não podem usar symlinks porque o interpretador (`sh`) precisa ler o arquivo. A solução para npm é invocá-lo via node diretamente: `node filesDir/node_modules/npm/bin/npm-cli.js <args>`, sem shell intermediário.
 
+### 6.7. Comandos Generalizados (runProjectCommand)
+
+O método `runProjectCommand` em `MainActivity.kt` roteia comandos de forma inteligente:
+
+| Prefixo | Ação |
+|---------|------|
+| `npm ` | `node npm-cli.js <args>` |
+| `npx ` | `node npx-cli.js <args>` |
+| `node ` | `libnode.so <args>` |
+| `git ` | `filesDir/git-core/git <args>` |
+| outros | `sh -c` com PATH aprimorado |
+
+O PATH no ambiente inclui `nativeLibraryDir`, `filesDir/git-core` e `workDir/node_modules/.bin`, permitindo que ferramentas locais (`tsx`, `nodemon`, `yarn`, `pnpm`) sejam encontráveis via `sh -c`.
+
+### 6.8. Suporte a Módulos Nativos (node-gyp) — EM IMPLEMENTAÇÃO
+
+Módulos npm com código C/C++ (`node-gyp rebuild`) não compilam no Android porque falta toolchain (gcc, make, python) e o `/usr/bin/env` para resolver shebangs.
+
+**Estratégia:** Extrair os seguintes pacotes do Termux e disponibilizá-los no app:
+- `binutils` — as, ld, ar, etc.
+- `gcc` (ou `gcc-default`) — compilador C
+- `make` — build system
+- `python` — necessário pelo node-gyp
+- `coreutils` — fornece `/usr/bin/env` e outras utils POSIX
+
+A instalação será opcional (botão "Instalar ambiente completo" no SetupActivity), detectável em tempo de execução. Quando presente, o `PATH` e `LD_LIBRARY_PATH` são expandidos para incluir os novos binários e libs. Um shim `/usr/bin/env` será criado como symlink para resolver shebangs.
+
+O tamanho total estimado é ~200MB adicionais no APK. O usuário optou explicitamente por tamanho em troca de funcionalidade.
+
 
 ---
 
@@ -248,10 +277,11 @@ Nodedroid-Run/
 │       ├── java/com/example/nodedroidrun/
 │       │   ├── SetupActivity.kt      ← Aliases, valida node+git, symlinks git-core, cert.pem
 │       │   ├── NodeService.kt        ← ForegroundService com notificação persistente
-│       │   ├── ProcessManager.kt     ← Singleton processos + GIT_EXEC_PATH + GIT_SSL_CAINFO
+│       │   ├── ProcessManager.kt     ← Singleton processos, env vars, ensureGitSymlinks()
 │       │   ├── GitHubOAuth.kt        ← OAuth2 GitHub + user name/email
 │       │   ├── Project.kt            ← Data class: id, name, path, cloneUrl, source
 │       │   ├── ProjectManager.kt     ← Singleton: load/save/add/remove projects.json
+│       │   ├── NodedroidJson.kt      ← Data class + load/save nodedroid.json (comandos customizados)
 │       │   └── MainActivity.kt       ← Drawer, login, testar git, adicionar/clonar/remover projetos
 │       └── res/
 │           ├── layout/
@@ -282,7 +312,7 @@ Todo processo criado pelo `ProcessManager` recebe:
 
 ```
 LD_LIBRARY_PATH   = nativeLibraryDir:filesDir/lib
-PATH              = nativeLibraryDir:/system/bin
+PATH              = nativeLibraryDir:filesDir/git-core:workDir/node_modules/.bin:/system/bin
 HOME              = filesDir/
 TMPDIR            = cacheDir/
 NODE_PATH         = filesDir/node_modules
@@ -358,14 +388,14 @@ filesDir/
 ### 🔲 Fase 4: Gerenciamento do Projeto (Dashboard)
 *   [x] Botão play no card do projeto → menu popup: "npm install", "npm start", "Gerenciar comandos".
 *   [x] "npm install" e "npm start" executam no diretório raiz do projeto com output em dialog.
-*   [ ] "Gerenciar comandos" → dashboard do app para registrar comandos customizados.
-*   [ ] Arquivo `nodedroid.json` no raiz do projeto versionado com configurações:
+*   [x] "Gerenciar comandos" → dialog completo: listar, adicionar, editar, excluir comandos.
+*   [x] Arquivo `nodedroid.json` no raiz do projeto com comandos customizados persistidos:
     ```json
     {
       "commands": [
-        { "label": "npm install", "run": "npm install" },
-        { "label": "npm start",   "run": "npm start" },
-        { "label": "build",       "run": "npm run build" }
+        { "label": "Iniciar servidor", "command": "npm start" },
+        { "label": "Instalar deps",    "command": "npm install" },
+        { "label": "Build",            "command": "npm run build" }
       ]
     }
     ```
@@ -373,6 +403,10 @@ filesDir/
     — Permite que a configuração viaje com o repositório entre dispositivos.
 *   [x] Botão "Clonar do GitHub" → listar repositórios do usuário via API (`/user/repos`) para seleção direta, sem precisar colar URL.
 *   [x] Integração do npm (módulo + entrypoint extraídos do pacote npm do Termux, `NODE_PATH` redirecionado).
+*   [x] Comandos generalizados (node, git, npm, npx) com PATH expandido para node_modules/.bin e git-core.
+*   [x] Corrigido: symlinks git-core recriados em toda inicialização (ensureGitSymlinks), resolvendo ENOENT após update do APK.
+*   [x] Corrigido: `--scripts-prepend-node-path=true` removido (deprecado no npm v11+).
+*   [ ] Toolchain C/C++ (gcc, make, python, coreutils) para suporte a node-gyp — EM IMPLEMENTAÇÃO.
 *   [ ] Abas de terminais independentes por projeto (`TabLayout` + `ViewPager2`).
 *   [ ] Painel Git: parsing de `git status --porcelain` para popular `RecyclerView`.
 *   [ ] Ações: `git add`, `git commit`, `git push`, `git pull`, revert por arquivo.
@@ -397,3 +431,5 @@ filesDir/
 - 2026-05-21: Fase 3 concluída — 7 binários git especiais (git-remote-https/http/ftp/ftps, git-http-fetch/push, git-imap-send) como .so separados nos jniLibs (linkam com libcurl). Bundle ca-certificates (cert.pem) em assets. GIT_SSL_CAINFO/CURL_CA_BUNDLE em todos os processos. Fluxo "Adicionar Projeto": clonar do GitHub (com token) ou via URL HTTP. Cards de projeto com long-press para remover. Persistência em projects.json. Clone validado em dispositivo físico com HTTPS.
 - 2026-05-21: Pré-requisitos de estabilidade — NodeService integrado ao ProcessManager (callback onCountChanged). Notificação persistente mostra contagem de processos ativos. POST_NOTIFICATIONS solicitado em runtime (Android 13+). MainActivity inicia o ForegroundService ao abrir.
 - 2026-05-21: Botão play (▶) nos cards de projeto com PopupMenu (npm install, npm start, Gerenciar comandos). Lista de repositórios do GitHub ao clonar (fetchRepos via /user/repos). Corrigido crash #0x101045c (selectableItemBackground via attribute, não drawable).
+- 2026-05-21: NodedroidJson.kt — Gerenciar Comandos funcional (adicionar/excluir comandos, salvos em nodedroid.json no diretório do projeto). Comandos generalizados: handlers explícitos para `node`, `git` + PATH expandido (git-core, node_modules/.bin). GIT_EXEC_PATH/GIT_SSL_CAINFO agora injetados em todos os branches do runProjectCommand. Corrigido `--scripts-prepend-node-path` (deprecado no npm v11+).
+- 2026-05-21: ensureGitSymlinks() no ProcessManager — recria symlinks do git-core em toda inicialização, resolvendo ENOENT após update do APK (nativeLibraryDir muda entre versões). Chamado de SetupActivity e MainActivity.onCreate.

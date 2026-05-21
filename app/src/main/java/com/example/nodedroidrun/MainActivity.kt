@@ -73,6 +73,8 @@ class MainActivity : AppCompatActivity() {
 
         refreshProjects()
 
+        ProcessManager.ensureGitSymlinks(this)
+
         startService(Intent(this, NodeService::class.java))
 
         handleOAuthCallback(intent)
@@ -227,15 +229,28 @@ class MainActivity : AppCompatActivity() {
         card.addView(metaView)
 
         playBtn.setOnClickListener { view ->
+            val projectDir = File(project.path)
+            val cfg = NodedroidJson.load(projectDir)
             val popup = PopupMenu(this, view, android.view.Gravity.END)
-            popup.menu.add("npm install")
-            popup.menu.add("npm start")
+            if (cfg.commands.isEmpty()) {
+                popup.menu.add("npm install")
+                popup.menu.add("npm start")
+            } else {
+                for (entry in cfg.commands) {
+                    popup.menu.add(0, 1, popup.menu.size(), entry.label)
+                }
+            }
             popup.menu.add("Gerenciar comandos")
             popup.setOnMenuItemClickListener { item ->
-                when (item.title.toString()) {
-                    "npm install" -> runProjectCommand(project, "npm install")
-                    "npm start"   -> runProjectCommand(project, "npm start")
-                    "Gerenciar comandos" -> Toast.makeText(this, "Em breve — Dashboard", Toast.LENGTH_SHORT).show()
+                val title = item.title.toString()
+                when {
+                    title == "Gerenciar comandos" -> showCommandManagerDialog(project, projectDir)
+                    title == "npm install" -> runProjectCommand(project, "npm install")
+                    title == "npm start" -> runProjectCommand(project, "npm start")
+                    else -> {
+                        val entry = cfg.commands.find { it.label == title }
+                        if (entry != null) runProjectCommand(project, entry.command)
+                    }
                 }
                 true
             }
@@ -272,11 +287,27 @@ class MainActivity : AppCompatActivity() {
         val npmCliJs = File(filesDir, "node_modules/npm/bin/npm-cli.js").absolutePath
         val workDir = File(project.path)
 
-        val cmd: List<String> = if (label.startsWith("npm ")) {
-            val npmArgs = label.removePrefix("npm ")
-            listOf(nodePath, npmCliJs, "--scripts-prepend-node-path=true") + npmArgs.split(" ")
-        } else {
-            listOf("sh", "-c", "cd \"${workDir.absolutePath}\" && $label 2>&1")
+        val gitPath = File(filesDir, "git-core/git").absolutePath
+
+        val cmd: List<String> = when {
+            label.startsWith("npm ") -> {
+                val args = label.removePrefix("npm ")
+                listOf(nodePath, npmCliJs) + args.split(" ")
+            }
+            label.startsWith("npx ") -> {
+                val args = label.removePrefix("npx ")
+                val npxCliJs = File(filesDir, "node_modules/npm/bin/npx-cli.js").absolutePath
+                listOf(nodePath, npxCliJs) + args.split(" ")
+            }
+            label.startsWith("node ") -> {
+                val args = label.removePrefix("node ")
+                listOf(nodePath) + args.split(" ")
+            }
+            label.startsWith("git ") -> {
+                val args = label.removePrefix("git ")
+                listOf(gitPath) + args.split(" ")
+            }
+            else -> listOf("sh", "-c", "cd \"${workDir.absolutePath}\" && $label 2>&1")
         }
 
         val progressDialog = AlertDialog.Builder(this)
@@ -295,10 +326,14 @@ class MainActivity : AppCompatActivity() {
                         redirectErrorStream(true)
                         environment().apply {
                             put("LD_LIBRARY_PATH", ldPath)
-                            put("PATH", "$nativeDir:${get("PATH") ?: "/system/bin"}")
+                            val binPath = "$nativeDir:${filesDir.absolutePath}/git-core:${workDir.absolutePath}/node_modules/.bin:${get("PATH") ?: "/system/bin"}"
+                            put("PATH", binPath)
                             put("HOME", filesDir.absolutePath)
                             put("TMPDIR", cacheDir.absolutePath)
                             put("NODE_PATH", "${filesDir.absolutePath}/node_modules")
+                            put("GIT_EXEC_PATH", "${filesDir.absolutePath}/git-core")
+                            put("GIT_SSL_CAINFO", "${filesDir.absolutePath}/tls/cert.pem")
+                            put("CURL_CA_BUNDLE", "${filesDir.absolutePath}/tls/cert.pem")
                         }
                     }
                     val process = pb.start()
@@ -313,6 +348,80 @@ class MainActivity : AppCompatActivity() {
                 showOutputDialog("$label — ${project.name}", output.toString().ifEmpty { "(sem saída)" })
             }
         }
+    }
+
+    private fun showCommandManagerDialog(project: Project, projectDir: File) {
+        var cfg = NodedroidJson.load(projectDir)
+        val items = mutableListOf<String>()
+        for (entry in cfg.commands) {
+            items.add("${entry.label} → ${entry.command}")
+        }
+        if (items.isEmpty()) items.add("(nenhum comando personalizado)")
+
+        AlertDialog.Builder(this)
+            .setTitle("Gerenciar comandos — ${project.name}")
+            .setItems(items.toTypedArray()) { _, which ->
+                if (cfg.commands.isEmpty()) return@setItems
+                val entry = cfg.commands[which]
+                AlertDialog.Builder(this)
+                    .setTitle("Editar comando")
+                    .setMessage("${entry.label}\n${entry.command}")
+                    .setPositiveButton("Excluir") { _, _ ->
+                        cfg = cfg.copy(commands = cfg.commands.toMutableList().apply { removeAt(which) })
+                        NodedroidJson.save(projectDir, cfg)
+                        Toast.makeText(this, "Comando removido", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNeutralButton("Editar", null)
+                    .show()
+            }
+            .setNegativeButton("Fechar", null)
+            .setNeutralButton("Adicionar") { _, _ ->
+                showAddCommandDialog(project, projectDir)
+            }
+            .show()
+    }
+
+    private fun showAddCommandDialog(project: Project, projectDir: File) {
+        val input = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(40.dp, 16.dp, 40.dp, 0)
+        }
+        val labelInput = EditText(this).apply {
+            hint = "Nome do comando (ex: Iniciar servidor)"
+            setTextColor(android.graphics.Color.WHITE)
+            setHintTextColor(android.graphics.Color.parseColor("#888888"))
+            setSingleLine(true)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 12.dp }
+        }
+        val cmdInput = EditText(this).apply {
+            hint = "Comando (ex: npm run dev)"
+            setTextColor(android.graphics.Color.WHITE)
+            setHintTextColor(android.graphics.Color.parseColor("#888888"))
+            setSingleLine(true)
+        }
+        input.addView(labelInput)
+        input.addView(cmdInput)
+
+        AlertDialog.Builder(this)
+            .setTitle("Adicionar comando")
+            .setView(input)
+            .setPositiveButton("Salvar") { _, _ ->
+                val label = labelInput.text.toString().trim()
+                val cmd = cmdInput.text.toString().trim()
+                if (label.isEmpty() || cmd.isEmpty()) {
+                    Toast.makeText(this, "Preencha todos os campos", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val cfg = NodedroidJson.load(projectDir)
+                val updated = cfg.copy(commands = cfg.commands + CommandEntry(label, cmd))
+                NodedroidJson.save(projectDir, updated)
+                Toast.makeText(this, "Comando adicionado", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
     }
 
     private val Int.dp: Int get() = (this * resources.displayMetrics.density).toInt()

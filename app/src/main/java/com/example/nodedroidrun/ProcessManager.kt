@@ -3,6 +3,7 @@ package com.example.nodedroidrun
 import android.content.Context
 import java.io.File
 import java.io.InputStream
+import java.nio.file.Files
 
 /**
  * ProcessManager — Singleton responsável por iniciar e gerenciar processos Node.js.
@@ -35,6 +36,90 @@ object ProcessManager {
     /** Diretório git-core com os sub-comandos (hardlinks). */
     fun getGitCoreDir(context: Context): File =
         File(context.filesDir, "git-core")
+
+    val GIT_SUBCOMMANDS = arrayOf(
+        "git", "git-add", "git-am", "git-annotate", "git-apply", "git-archive",
+        "git-backfill", "git-bisect", "git-blame", "git-branch", "git-bugreport",
+        "git-bundle", "git-cat-file", "git-check-attr", "git-check-ignore",
+        "git-check-mailmap", "git-check-ref-format", "git-checkout", "git-checkout--worker",
+        "git-checkout-index", "git-cherry", "git-cherry-pick", "git-clean", "git-clone",
+        "git-column", "git-commit", "git-commit-graph", "git-commit-tree", "git-config",
+        "git-count-objects", "git-credential", "git-credential-cache",
+        "git-credential-cache--daemon", "git-credential-store", "git-daemon",
+        "git-describe", "git-diagnose", "git-diff", "git-diff-files", "git-diff-index",
+        "git-diff-pairs", "git-diff-tree", "git-difftool", "git-fast-export",
+        "git-fast-import", "git-fetch", "git-fetch-pack", "git-fmt-merge-msg",
+        "git-for-each-ref", "git-for-each-repo", "git-format-patch", "git-fsck",
+        "git-fsck-objects", "git-fsmonitor--daemon", "git-gc", "git-get-tar-commit-id",
+        "git-grep", "git-hash-object", "git-help", "git-history", "git-hook",
+        "git-http-backend", "git-http-fetch", "git-http-push", "git-imap-send",
+        "git-index-pack", "git-init", "git-init-db", "git-interpret-trailers",
+        "git-last-modified", "git-log", "git-ls-files", "git-ls-remote", "git-ls-tree",
+        "git-mailinfo", "git-mailsplit", "git-maintenance", "git-merge", "git-merge-base",
+        "git-merge-file", "git-merge-index", "git-merge-ours", "git-merge-recursive",
+        "git-merge-subtree", "git-merge-tree", "git-mktag", "git-mktree",
+        "git-multi-pack-index", "git-mv", "git-name-rev", "git-notes",
+        "git-pack-objects", "git-pack-redundant", "git-pack-refs", "git-patch-id",
+        "git-prune", "git-prune-packed", "git-pull", "git-push", "git-range-diff",
+        "git-read-tree", "git-rebase", "git-receive-pack", "git-reflog", "git-refs",
+        "git-remote", "git-remote-ext", "git-remote-fd", "git-remote-ftp",
+        "git-remote-ftps", "git-remote-http", "git-remote-https", "git-repack",
+        "git-replace", "git-replay", "git-repo", "git-rerere", "git-reset",
+        "git-restore", "git-rev-list", "git-rev-parse", "git-revert", "git-rm",
+        "git-send-pack", "git-sh-i18n--envsubst", "git-shell", "git-shortlog",
+        "git-show", "git-show-branch", "git-show-index", "git-show-ref",
+        "git-sparse-checkout", "git-stage", "git-stash", "git-status", "git-stripspace",
+        "git-submodule--helper", "git-switch", "git-symbolic-ref", "git-tag",
+        "git-unpack-file", "git-unpack-objects", "git-update-index", "git-update-ref",
+        "git-update-server-info", "git-upload-archive", "git-upload-pack", "git-var",
+        "git-verify-commit", "git-verify-pack", "git-verify-tag", "git-version",
+        "git-whatchanged", "git-worktree", "git-write-tree", "scalar"
+    )
+
+    val GIT_SPECIAL_BINARIES = mapOf(
+        "git-remote-https" to "libgit_remote_https.so",
+        "git-remote-http"  to "libgit_remote_http.so",
+        "git-remote-ftp"   to "libgit_remote_ftp.so",
+        "git-remote-ftps"  to "libgit_remote_ftps.so",
+        "git-http-fetch"   to "libgit_http_fetch.so",
+        "git-http-push"    to "libgit_http_push.so",
+        "git-imap-send"    to "libgit_imap_send.so"
+    )
+
+    /**
+     * Garante que os symlinks do git-core em filesDir/git-core/ apontem
+     * para o nativeLibraryDir atual.  Recreate sempre, porque o
+     * nativeLibraryDir muda entre versões do APK (Android incrementa o
+     * caminho), quebrando symlinks antigos.
+     */
+    fun ensureGitSymlinks(context: Context) {
+        val nativeDir = File(context.applicationInfo.nativeLibraryDir)
+        val gitCoreDir = getGitCoreDir(context)
+        gitCoreDir.mkdirs()
+
+        val gitSrc = File(nativeDir, "libgit.so")
+        if (!gitSrc.exists()) return  // SetupActivity reportará o erro
+
+        val gitSrcPath = gitSrc.toPath()
+        for (cmd in GIT_SUBCOMMANDS) {
+            val link = gitCoreDir.toPath().resolve(cmd)
+            Files.deleteIfExists(link)
+            val target = if (cmd in GIT_SPECIAL_BINARIES) {
+                val soName = GIT_SPECIAL_BINARIES[cmd]!!
+                val soFile = File(nativeDir, soName)
+                if (soFile.exists()) soFile.toPath() else gitSrcPath
+            } else {
+                gitSrcPath
+            }
+            try {
+                Files.createSymbolicLink(link, target)
+            } catch (_: Exception) {
+                // fallback: hard copy
+                target.toFile().copyTo(link.toFile(), overwrite = true)
+                link.toFile().setExecutable(true)
+            }
+        }
+    }
 
     /**
      * Inicia um processo com as variáveis de ambiente corretas para os binários do Termux.
