@@ -15,16 +15,15 @@ O design visa altíssimo desempenho, uso do ecossistema Linux/POSIX no armazenam
     *   *Justificativa:* Este armazenamento usa o sistema `ext4`, que suporta *symlinks* perfeitamente, sendo obrigatório para o funcionamento do comando `npm install` sem quebrar dependências do `.bin`.
 *   **Motor de Execução (Core):**
     *   Binários pré-compilados do **Node.js v26.1.0** (extraídos dos pacotes do Termux) para todas as arquiteturas suportadas.
-    *   Os ZIPs são **embutidos como assets** no APK (`app/src/main/assets/binaries-<arch>.zip`), eliminando a necessidade de download externo.
-    *   O app detecta a arquitetura do dispositivo em tempo de execução via `Build.SUPPORTED_ABIS[0]` e extrai o ZIP correto para `filesDir/bin/`.
-    *   Os binários são extraídos com permissão de execução (`chmod -R 755 bin/`).
-    *   **Tamanho dos assets:** aarch64=17.8MB, arm=14.4MB, x86_64=17.2MB, i686=18.9MB.
+    *   Os `.so` são **embutidos via jniLibs** no APK (`app/src/main/jniLibs/<abi>/`), instalados automaticamente pelo Android no `nativeLibraryDir` (sempre executável, sem restrição `noexec`).
+    *   O app detecta a arquitetura do dispositivo em tempo de execução via `Build.SUPPORTED_ABIS[0]` e o Android seleciona a pasta `jniLibs/<abi>/` correta automaticamente.
+    *   O `setupActivity` cria **aliases versionados** em `filesDir/lib/` (ex: `libz.so → libz.so.1`, `libssl.so → libssl.so.3`), pois o `jniLibs` só aceita nomes sem sufixo de versão, mas o `node` binário procura pelos nomes versionados.
 *   **Execução dos Binários (LD_LIBRARY_PATH):**
-    *   Os binários do Termux são compilados para o caminho `/data/data/com.termux/...`. Para rodá-los no contexto do nosso app, o `ProcessBuilder` **deve** injetar a variável de ambiente `LD_LIBRARY_PATH` apontando para a pasta `filesDir/bin/` do nosso app. Isso faz o dynamic linker do Android carregar as bibliotecas `.so` corretas.
+    *   Os binários do Termux são compilados para o caminho `/data/data/com.termux/...`. Para rodá-los no contexto do nosso app, o `ProcessBuilder` **deve** injetar a variável de ambiente `LD_LIBRARY_PATH` apontando para `nativeLibraryDir:filesDir/lib` do nosso app. Isso faz o dynamic linker do Android carregar as bibliotecas `.so` corretas.
     *   Exemplo de injeção:
         ```kotlin
-        processBuilder.environment()["LD_LIBRARY_PATH"] = binDir.absolutePath
-        processBuilder.environment()["PATH"] = "${binDir.absolutePath}:${System.getenv("PATH")}"
+        processBuilder.environment()["LD_LIBRARY_PATH"] = "${nativeLibDir}:${filesLibDir}"
+        processBuilder.environment()["PATH"] = "${nativeLibDir}:/system/bin"
         ```
 *   **Terminal/Shell:** Utilização de uma **View Customizada Kotlin simplificada** (usando `RecyclerView` ou `TextView` rolável), otimizada para capturar e exibir saídas contínuas (`stdout`/`stderr`) de comandos e servidores Node.js, e um campo de input simples para enviar dados/comandos para o `stdin`. Isso evita o uso de JNI e bibliotecas pesadas de terminal do Termux, mantendo o app leve e focado no gerenciamento de logs dos servidores.
 *   **Rede:** Delegação total ao **Tailscale**. O app rodará os projetos em `localhost:<porta>` e o SO do Android lidará com o roteamento através do Tailscale. Nenhuma configuração de túnel ou proxy reverso será construída no app no momento.
@@ -128,15 +127,19 @@ Os seguintes pacotes `.deb` foram baixados do repositório `packages.termux.dev`
 | `libc++` | 29 | Biblioteca C++ (`libc++_shared.so`) |
 | `zlib` | 1.3.2 | Compressão (`libz.so.X`) |
 
-### 6.3. Arquivos ZIP de Distribuição
-Os `.deb` foram extraídos e reempacotados em arquivos `.zip` por arquitetura, hospedados nas **GitHub Releases** do repositório `Theadrill/Nodedroid-Run`:
+### 6.3. Distribuição via jniLibs (Direto no APK)
+Os `.so` extraídos dos `.deb` são colocados diretamente em `app/src/main/jniLibs/<abi>/`. O Android empacota e instala automaticamente no `nativeLibraryDir` do app. Não há download externo — tudo vem dentro do APK.
 
-| Arquivo ZIP | Arquitetura | Dispositivo alvo |
-|-------------|-------------|-----------------|
-| `binaries-aarch64.zip` | ARM64 | Celulares físicos modernos (maioria) |
-| `binaries-arm.zip` | ARMv7 | Celulares físicos mais antigos |
-| `binaries-x86_64.zip` | x86_64 | Emuladores no PC |
-| `binaries-i686.zip` | x86 | Emuladores mais antigos |
+Para cada arquitetura suportada, existe uma pasta em `jniLibs/`:
+
+| Pasta | Arquitetura | Dispositivo alvo |
+|-------|-------------|-----------------|
+| `arm64-v8a/` | ARM64 | Celulares físicos modernos (maioria) |
+| `armeabi-v7a/` | ARMv7 | Celulares físicos mais antigos |
+| `x86_64/` | x86_64 | Emuladores no PC |
+| `x86/` | x86 | Emuladores mais antigos |
+
+> Os arquivos `.zip` em `binaries-temp/zips/` são mantidos como referência para publicação futura em GitHub Releases, mas **não são usados no build** — o empacotamento é feito via `jniLibs`.
 
 ### 6.4. Conteúdo de Cada jniLibs (arm64-v8a)
 Os arquivos ficam em `app/src/main/jniLibs/arm64-v8a/` e são instalados automaticamente pelo Android no `nativeLibraryDir`, que é **sempre executável** (sem restrição noexec):
@@ -185,21 +188,28 @@ Nodedroid-Run/
 │   ├── build.gradle.kts              ← BuildConfig com CLIENT_ID e CLIENT_SECRET injetados
 │   └── src/main/
 │       ├── AndroidManifest.xml       ← Permissões, SetupActivity como Launcher, NodeService
+│       ├── jniLibs/
+│       │   ├── arm64-v8a/            ← .so para ARM64 (libnode.so + dependências)
+│       │   └── x86_64/               ← .so para x86_64 (emuladores)
 │       ├── java/com/example/nodedroidrun/
-│       │   ├── SetupActivity.kt      ← Download de binários, extração, permissões, fallback Mock
+│       │   ├── SetupActivity.kt      ← Cria aliases versionados das .so, valida libnode.so
 │       │   ├── NodeService.kt        ← ForegroundService com notificação persistente
-│       │   └── MainActivity.kt       ← Tela principal (a ser implementada)
+│       │   ├── ProcessManager.kt     ← Singleton gerenciador de processos com env vars
+│       │   └── MainActivity.kt       ← Tela principal com terminal, startup sequence 6 passos
 │       └── res/layout/
-│           └── activity_setup.xml    ← Layout dark-themed com ProgressBar
+│           ├── activity_setup.xml    ← Layout dark-themed com ProgressBar
+│           └── activity_main.xml     ← Layout com terminal, badge de status, barra de portas
 ├── docs/
 │   └── plano-do-projeto.md           ← Este arquivo
 ├── local.properties                  ← SDK path + credenciais OAuth (NÃO commitar)
 └── binaries-temp/                    ← Pasta temporária local (NÃO commitar)
-    └── zips/
-        ├── binaries-aarch64.zip      ← Publicar no GitHub Releases
-        ├── binaries-arm.zip          ← Publicar no GitHub Releases
-        ├── binaries-x86_64.zip       ← Publicar no GitHub Releases
-        └── binaries-i686.zip         ← Publicar no GitHub Releases
+    ├── *.deb                         ← Pacotes .deb do Termux baixados
+    ├── extracted/<arch>/             ← .deb extraídos + collect/ com artefatos finais
+    └── zips/                         ← ZIPs consolidados (referência para GitHub Releases)
+        ├── binaries-aarch64.zip
+        ├── binaries-arm.zip
+        ├── binaries-x86_64.zip
+        └── binaries-i686.zip
 ```
 
 ### 7.2. Permissões no AndroidManifest.xml
@@ -217,14 +227,13 @@ Nodedroid-Run/
 ### ✅ Fase 1: Fundação do Sistema Base — CONCLUÍDA
 *   [x] Setup do projeto Kotlin (minSdk 26, BuildConfig habilitado).
 *   [x] Integração segura das credenciais OAuth via `local.properties` → `BuildConfig`.
-*   [x] Desenvolvimento da `SetupActivity` extrai os binários **diretamente dos assets** do APK (sem download externo).
-*   [x] Detecção automática da arquitetura do dispositivo (`Build.SUPPORTED_ABIS`) e seleção do ZIP correto.
+*   [x] Desenvolvimento da `SetupActivity` valida `libnode.so` e cria aliases versionados em `filesDir/lib/`.
 *   [x] Implementação do `NodeService` (ForegroundService) com notificação persistente.
 *   [x] Configuração completa do `AndroidManifest.xml`.
 *   [x] Build validado: `./gradlew assembleDebug` → `BUILD SUCCESSFUL`.
-*   [x] Binários do Node.js v26.1.0 extraídos dos pacotes do Termux, empacotados em 4 ZIPs e embutidos como assets.
+*   [x] Binários do Node.js v26.1.0 extraídos dos pacotes do Termux, `.so` alocados em `jniLibs/<abi>/`.
 
-### 🔄 Fase 2: Motor de Processos e Terminal — EM ANDAMENTO
+### ✅ Fase 2: Motor de Processos e Terminal — CONCLUÍDA
 *   [x] Criar `ProcessManager.kt` (Singleton) com `LD_LIBRARY_PATH` configurado.
 *   [x] Implementar execução de processos com `ProcessBuilder` injetando variáveis de ambiente obrigatórias.
 *   [x] Desenvolver UI de terminal simplificada (ScrollView + TextView monospace).
@@ -237,9 +246,9 @@ Nodedroid-Run/
     4. Escrita do `server.js`
     5. Inicialização do servidor
     6. Leitura do stdout em tempo real
-*   [ ] **PENDENTE:** Validar que `node --version` retorna resultado correto no dispositivo físico.
-*   [ ] **PENDENTE:** Validar que o servidor HTTP responde em `http://localhost:4150`.
-*   [ ] **PENDENTE:** Verificar se as libs .so carregam corretamente (sem erro de linker).
+*   [x] Validado em dispositivo físico: `node --version` retorna `v26.1.0`.
+*   [x] Validado em dispositivo físico: servidor HTTP responde em `http://localhost:4150`.
+*   [x] Validado em dispositivo físico: libs .so carregam sem erro de linker.
 
 ### 🔲 Fase 3: Autenticação e Repositórios
 *   [ ] Implementar fluxo OAuth2 com GitHub (Custom Tabs + callback URI scheme).
@@ -262,3 +271,9 @@ Nodedroid-Run/
 *   **Editor de Texto Integrado:** Implementação de um editor Monaco/CodeMirror para permitir edições de código diretamente no app.
 *   **Suporte a Git via SSH:** Alternativa ao OAuth para autenticação via chave SSH.
 *   **Detecção de Pacotes Nativos Incompatíveis:** O terminal deve detectar falhas do `node-gyp` e sugerir alternativas JavaScript puras (ex: `sql.js` em vez de `sqlite3`).
+
+---
+
+## Atualização
+
+- 2026-05-21: Atualização da documentação — anotações e pequenas correções no plano do projeto. Commit e sincronização realizados.
