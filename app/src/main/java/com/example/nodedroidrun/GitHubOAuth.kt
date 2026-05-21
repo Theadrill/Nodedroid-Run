@@ -6,6 +6,8 @@ import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
@@ -14,11 +16,13 @@ object GitHubOAuth {
 
     private const val AUTH_URL = "https://github.com/login/oauth/authorize"
     private const val TOKEN_URL = "https://github.com/login/oauth/access_token"
+    private const val USER_URL = "https://api.github.com/user"
     private const val REDIRECT_URI = "nodeapp://oauth/github"
     private const val SCOPE = "repo"
 
     private const val PREF_NAME = "github_oauth"
     private const val KEY_TOKEN = "access_token"
+    private const val KEY_USER = "user_login"
     private const val KEY_STATE = "oauth_state"
 
     private var currentState: String? = null
@@ -56,47 +60,67 @@ object GitHubOAuth {
         customTabsIntent.launchUrl(context, authUri)
     }
 
-    fun handleCallback(context: Context, uri: Uri): Boolean {
-        if (uri.scheme != "nodeapp" || uri.host != "oauth") return false
+    fun extractCode(uri: Uri): String? {
+        if (uri.scheme != "nodeapp" || uri.host != "oauth") return null
 
         val code = uri.getQueryParameter("code")
         val state = uri.getQueryParameter("state")
 
         if (state != null && state != currentState) {
             currentState = null
-            return false
+            return null
         }
         currentState = null
 
-        if (code.isNullOrEmpty()) return false
-
-        exchangeCodeForToken(context, code)
-        return true
+        return if (code.isNullOrEmpty()) null else code
     }
 
-    private fun exchangeCodeForToken(context: Context, code: String) {
+    suspend fun exchangeCode(context: Context, code: String): Boolean = withContext(Dispatchers.IO) {
         val clientId = BuildConfig.GITHUB_CLIENT_ID
         val clientSecret = BuildConfig.GITHUB_CLIENT_SECRET
 
         val body = "client_id=$clientId&client_secret=$clientSecret&code=$code&redirect_uri=$REDIRECT_URI"
 
-        val url = URL(TOKEN_URL)
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.doOutput = true
-        conn.setRequestProperty("Accept", "application/json")
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+        try {
+            val url = URL(TOKEN_URL)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Accept", "application/json")
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
 
-        OutputStreamWriter(conn.outputStream).use { it.write(body) }
+            OutputStreamWriter(conn.outputStream).use { it.write(body) }
 
-        val response = conn.inputStream.bufferedReader().readText()
-        conn.disconnect()
+            val response = conn.inputStream.bufferedReader().readText()
+            conn.disconnect()
 
-        val json = org.json.JSONObject(response)
-        val token = if (json.has("access_token")) json.getString("access_token") else null
-        if (token != null) {
-            saveToken(context, token)
-        }
+            val json = org.json.JSONObject(response)
+            val token = if (json.has("access_token")) json.getString("access_token") else null
+            if (token != null) {
+                saveToken(context, token)
+                fetchAndSaveUser(context, token)
+                return@withContext true
+            }
+        } catch (_: Exception) { }
+        false
+    }
+
+    private fun fetchAndSaveUser(context: Context, token: String) {
+        try {
+            val url = URL(USER_URL)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.setRequestProperty("Authorization", "Bearer $token")
+            conn.setRequestProperty("Accept", "application/json")
+
+            val response = conn.inputStream.bufferedReader().readText()
+            conn.disconnect()
+
+            val json = org.json.JSONObject(response)
+            val login = if (json.has("login")) json.getString("login") else null
+            if (login != null) {
+                getSecurePrefs(context).edit().putString(KEY_USER, login).apply()
+            }
+        } catch (_: Exception) { }
     }
 
     private fun saveToken(context: Context, token: String) {
@@ -107,11 +131,15 @@ object GitHubOAuth {
         return getSecurePrefs(context).getString(KEY_TOKEN, null)
     }
 
+    fun getUserLogin(context: Context): String? {
+        return getSecurePrefs(context).getString(KEY_USER, null)
+    }
+
     fun isLoggedIn(context: Context): Boolean {
         return getToken(context) != null
     }
 
     fun logout(context: Context) {
-        getSecurePrefs(context).edit().remove(KEY_TOKEN).apply()
+        getSecurePrefs(context).edit().remove(KEY_TOKEN).remove(KEY_USER).apply()
     }
 }
