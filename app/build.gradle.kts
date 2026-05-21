@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
 }
@@ -10,6 +13,17 @@ android {
         }
     }
 
+    val localProperties = Properties()
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        val stream = FileInputStream(localPropertiesFile)
+        localProperties.load(stream)
+        stream.close()
+    }
+    val githubClientId = localProperties.getProperty("github.client.id") ?: ""
+    val githubClientSecret = localProperties.getProperty("github.client.secret") ?: ""
+
+
     defaultConfig {
         applicationId = "com.example.nodedroidrun"
         minSdk = 26
@@ -18,7 +32,29 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "GITHUB_CLIENT_ID", "\"$githubClientId\"")
+        buildConfigField("String", "GITHUB_CLIENT_SECRET", "\"$githubClientSecret\"")
+
+        ndk {
+            // arm64-v8a = celulares físicos modernos
+            // x86_64    = emulador Android Studio
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
+
+    packaging {
+        jniLibs {
+            // Não comprime as libs nativas — necessário para que o Android
+            // extraia o libnode.so para um local executável no dispositivo
+            useLegacyPackaging = true
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
 
     buildTypes {
         release {

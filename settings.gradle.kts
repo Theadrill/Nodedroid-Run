@@ -22,5 +22,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Nodedroid(Run"
+rootProject.name = "Nodedroid-Run"
 include(":app")
+

@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Pasta temporária de processamento dos binários do Termux (não versionar)
+binaries-temp/
