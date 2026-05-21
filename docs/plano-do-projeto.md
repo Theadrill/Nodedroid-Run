@@ -342,6 +342,21 @@ filesDir/
 *   [x] Validado em dispositivo físico: Git v2.54.0, clone via HTTPS, test suite completa.
 
 ### 🔲 Fase 4: Gerenciamento do Projeto (Dashboard)
+*   [ ] Botão play no card do projeto → menu popup: "npm install", "npm start", "Gerenciar comandos".
+*   [ ] "npm install" e "npm start" executam no diretório raiz do projeto com output em dialog.
+*   [ ] "Gerenciar comandos" → dashboard do app para registrar comandos customizados.
+*   [ ] Arquivo `nodedroid.json` no raiz do projeto versionado com configurações:
+    ```json
+    {
+      "commands": [
+        { "label": "npm install", "run": "npm install" },
+        { "label": "npm start",   "run": "npm start" },
+        { "label": "build",       "run": "npm run build" }
+      ]
+    }
+    ```
+    — Se existir, o menu popup carrega do JSON em vez dos defaults hardcoded.
+    — Permite que a configuração viaje com o repositório entre dispositivos.
 *   [ ] Abas de terminais independentes por projeto (`TabLayout` + `ViewPager2`).
 *   [ ] Painel Git: parsing de `git status --porcelain` para popular `RecyclerView`.
 *   [ ] Ações: `git add`, `git commit`, `git push`, `git pull`, revert por arquivo.
@@ -364,3 +379,4 @@ filesDir/
 - 2026-05-21: Atualização da documentação — anotações e pequenas correções no plano do projeto. Commit e sincronização realizados.
 - 2026-05-21: Integração do binário Git v2.54.0 (Termux) + dependências (libcurl, libiconv, libssh2, libnghttp3, libngtcp2, pcre2, libexpat). Estratégia de symlinks em filesDir/git-core/ → nativeLibraryDir/libgit.so para contornar noexec. SetupActivity valida node + git. ProcessManager injeta GIT_EXEC_PATH. Botão "Testar Git" no menu lateral com fluxo de login/config/teste. `.gitconfig` escrito em filesDir com name/email do OAuth. Build e testes locais validados em dispositivo físico.
 - 2026-05-21: Fase 3 concluída — 7 binários git especiais (git-remote-https/http/ftp/ftps, git-http-fetch/push, git-imap-send) como .so separados nos jniLibs (linkam com libcurl). Bundle ca-certificates (cert.pem) em assets. GIT_SSL_CAINFO/CURL_CA_BUNDLE em todos os processos. Fluxo "Adicionar Projeto": clonar do GitHub (com token) ou via URL HTTP. Cards de projeto com long-press para remover. Persistência em projects.json. Clone validado em dispositivo físico com HTTPS.
+- 2026-05-21: Pré-requisitos de estabilidade — NodeService integrado ao ProcessManager (callback onCountChanged). Notificação persistente mostra contagem de processos ativos. POST_NOTIFICATIONS solicitado em runtime (Android 13+). MainActivity inicia o ForegroundService ao abrir.

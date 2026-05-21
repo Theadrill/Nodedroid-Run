@@ -72,6 +72,8 @@ class MainActivity : AppCompatActivity() {
 
         refreshProjects()
 
+        startService(Intent(this, NodeService::class.java))
+
         handleOAuthCallback(intent)
         updateMenuTitles()
     }

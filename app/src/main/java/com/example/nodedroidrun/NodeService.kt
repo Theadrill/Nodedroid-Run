@@ -24,30 +24,37 @@ class NodeService : Service() {
     }
 
     private val binder = NodeBinder()
+    private var activeCount = 0
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        ProcessManager.onCountChanged = { count ->
+            activeCount = count
+            updateNotification()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = createNotification()
-        startForeground(NOTIFICATION_ID, notification)
-
-        // START_NOT_STICKY: se o sistema matar o serviço, ele NÃO tenta reiniciar automaticamente.
-        // Evita loops de crash que corrompem o emulador durante o desenvolvimento.
-        // Trocar para START_STICKY apenas quando o app estiver estável em produção.
+        startForeground(NOTIFICATION_ID, buildNotification())
         return START_NOT_STICKY
     }
 
-    override fun onBind(intent: Intent?): IBinder {
-        return binder
+    override fun onBind(intent: Intent?): IBinder = binder
+
+    override fun onDestroy() {
+        super.onDestroy()
+        ProcessManager.onCountChanged = null
     }
 
-    private fun createNotification(): Notification {
+    fun updateNotification() {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(NOTIFICATION_ID, buildNotification())
+    }
+
+    private fun buildNotification(): Notification {
         val notificationIntent = Intent(this, MainActivity::class.java)
-        
-        // Flag compatível com Android 12+ (API 31+) e anteriores
+
         val pendingIntentFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         } else {
@@ -58,12 +65,18 @@ class NodeService : Service() {
             this, 0, notificationIntent, pendingIntentFlag
         )
 
+        val text = if (activeCount > 0) {
+            "$activeCount projeto(s) em execução"
+        } else {
+            "Serviço em execução em segundo plano."
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Servidor Node.js Ativo")
-            .setContentText("Serviço em execução em segundo plano.")
-            .setSmallIcon(R.mipmap.ic_launcher) // Ícone padrão do launcher do app
+            .setContentTitle("Nodedroid Run")
+            .setContentText(text)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
-            .setOngoing(true) // Torna a notificação persistente
+            .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()

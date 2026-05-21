@@ -14,6 +14,11 @@ import java.io.InputStream
 object ProcessManager {
 
     private val activeProcesses = mutableMapOf<String, Process>()
+    var onCountChanged: ((Int) -> Unit)? = null
+
+    private fun notifyCount() {
+        onCountChanged?.invoke(activeProcesses.size)
+    }
 
     /** Diretório onde o Android instalou as libs nativas (sempre executável). */
     fun getBinDir(context: Context): File =
@@ -67,6 +72,7 @@ object ProcessManager {
             }
             val process = pb.start()
             activeProcesses[id] = process
+            notifyCount()
             process
         } catch (e: Exception) {
             e.printStackTrace()
@@ -77,11 +83,13 @@ object ProcessManager {
     fun stop(id: String) {
         activeProcesses[id]?.destroyForcibly()
         activeProcesses.remove(id)
+        notifyCount()
     }
 
     fun stopAll() {
         activeProcesses.values.forEach { it.destroyForcibly() }
         activeProcesses.clear()
+        notifyCount()
     }
 
     fun isRunning(id: String): Boolean {
