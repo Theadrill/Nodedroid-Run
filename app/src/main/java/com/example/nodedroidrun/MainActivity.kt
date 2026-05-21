@@ -13,9 +13,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        window.statusBarColor = android.graphics.Color.parseColor("#FF1A1A1A")
-
         val drawerLayout = findViewById<DrawerLayout>(R.id.drawer_layout)
+        drawerLayout.setStatusBarBackgroundColor(android.graphics.Color.parseColor("#FF1A1A1A"))
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        window.statusBarColor = android.graphics.Color.parseColor("#FF1A1A1A")
         val btnMenu      = findViewById<TextView>(R.id.btn_menu)
         val navView      = findViewById<NavigationView>(R.id.nav_view)
 
