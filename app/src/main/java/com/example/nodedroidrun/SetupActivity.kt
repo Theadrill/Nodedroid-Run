@@ -13,6 +13,8 @@ import java.io.File
 import java.io.FileWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.file.Files
+import java.nio.file.Path
 
 class SetupActivity : AppCompatActivity() {
 
@@ -55,6 +57,13 @@ class SetupActivity : AppCompatActivity() {
                 step("Verificando Node.js...")
                 testNodeVersion(nativeDir, libDir)
 
+                step("Configurando Git...")
+                val gitCoreDir = File(filesDir, "git-core")
+                setupGit(nativeDir, gitCoreDir)
+
+                step("Verificando Git...")
+                testGitVersion(nativeDir, libDir, gitCoreDir)
+
                 step("Preparando servidor de validação...")
                 val serverFile = writeServerJs()
 
@@ -80,6 +89,45 @@ class SetupActivity : AppCompatActivity() {
         }
     }
 
+    private val GIT_SUBCOMMANDS = arrayOf(
+        "git", "git-add", "git-am", "git-annotate", "git-apply", "git-archive",
+        "git-backfill", "git-bisect", "git-blame", "git-branch", "git-bugreport",
+        "git-bundle", "git-cat-file", "git-check-attr", "git-check-ignore",
+        "git-check-mailmap", "git-check-ref-format", "git-checkout", "git-checkout--worker",
+        "git-checkout-index", "git-cherry", "git-cherry-pick", "git-clean", "git-clone",
+        "git-column", "git-commit", "git-commit-graph", "git-commit-tree", "git-config",
+        "git-count-objects", "git-credential", "git-credential-cache",
+        "git-credential-cache--daemon", "git-credential-store", "git-daemon",
+        "git-describe", "git-diagnose", "git-diff", "git-diff-files", "git-diff-index",
+        "git-diff-pairs", "git-diff-tree", "git-difftool", "git-fast-export",
+        "git-fast-import", "git-fetch", "git-fetch-pack", "git-fmt-merge-msg",
+        "git-for-each-ref", "git-for-each-repo", "git-format-patch", "git-fsck",
+        "git-fsck-objects", "git-fsmonitor--daemon", "git-gc", "git-get-tar-commit-id",
+        "git-grep", "git-hash-object", "git-help", "git-history", "git-hook",
+        "git-http-backend", "git-http-fetch", "git-http-push", "git-imap-send",
+        "git-index-pack", "git-init", "git-init-db", "git-interpret-trailers",
+        "git-last-modified", "git-log", "git-ls-files", "git-ls-remote", "git-ls-tree",
+        "git-mailinfo", "git-mailsplit", "git-maintenance", "git-merge", "git-merge-base",
+        "git-merge-file", "git-merge-index", "git-merge-ours", "git-merge-recursive",
+        "git-merge-subtree", "git-merge-tree", "git-mktag", "git-mktree",
+        "git-multi-pack-index", "git-mv", "git-name-rev", "git-notes",
+        "git-pack-objects", "git-pack-redundant", "git-pack-refs", "git-patch-id",
+        "git-prune", "git-prune-packed", "git-pull", "git-push", "git-range-diff",
+        "git-read-tree", "git-rebase", "git-receive-pack", "git-reflog", "git-refs",
+        "git-remote", "git-remote-ext", "git-remote-fd", "git-remote-ftp",
+        "git-remote-ftps", "git-remote-http", "git-remote-https", "git-repack",
+        "git-replace", "git-replay", "git-repo", "git-rerere", "git-reset",
+        "git-restore", "git-rev-list", "git-rev-parse", "git-revert", "git-rm",
+        "git-send-pack", "git-sh-i18n--envsubst", "git-shell", "git-shortlog",
+        "git-show", "git-show-branch", "git-show-index", "git-show-ref",
+        "git-sparse-checkout", "git-stage", "git-stash", "git-status", "git-stripspace",
+        "git-submodule--helper", "git-switch", "git-symbolic-ref", "git-tag",
+        "git-unpack-file", "git-unpack-objects", "git-update-index", "git-update-ref",
+        "git-update-server-info", "git-upload-archive", "git-upload-pack", "git-var",
+        "git-verify-commit", "git-verify-pack", "git-verify-tag", "git-version",
+        "git-whatchanged", "git-worktree", "git-write-tree", "scalar"
+    )
+
     private fun setupNativeLibs(nativeDir: File, libDir: File) {
         createVersionedAlias(nativeDir, libDir, "libz.so",        "libz.so.1")
         createVersionedAlias(nativeDir, libDir, "libssl.so",      "libssl.so.3")
@@ -88,11 +136,70 @@ class SetupActivity : AppCompatActivity() {
         createVersionedAlias(nativeDir, libDir, "libicuuc.so",    "libicuuc.so.78")
         createVersionedAlias(nativeDir, libDir, "libicudata.so",  "libicudata.so.78")
         createVersionedAlias(nativeDir, libDir, "libsqlite3.so",  "libsqlite3.so.0")
+        createVersionedAlias(nativeDir, libDir, "libexpat.so",    "libexpat.so.1")
 
         val nodeFile = File(nativeDir, "libnode.so")
         if (!nodeFile.exists()) {
             error("libnode.so não encontrado em ${nodeFile.absolutePath}")
         }
+    }
+
+    private fun setupGit(nativeDir: File, gitCoreDir: File) {
+        val gitSrc  = File(nativeDir, "libgit.so")
+        if (!gitSrc.exists()) {
+            log("libgit.so ausente — pulando setup do Git")
+            return
+        }
+        gitCoreDir.mkdirs()
+
+        val gitBin = File(gitCoreDir, "git")
+        val gitSrcPath: Path = gitSrc.toPath()
+
+        if (!gitBin.exists()) {
+            try {
+                Files.createSymbolicLink(gitBin.toPath(), gitSrcPath)
+            } catch (_: Exception) {
+                gitSrc.copyTo(gitBin, overwrite = true)
+                gitBin.setExecutable(true)
+            }
+        }
+
+        for (cmd in GIT_SUBCOMMANDS) {
+            val linkPath = gitCoreDir.toPath().resolve(cmd)
+            if (!linkPath.toFile().exists()) {
+                try {
+                    Files.createSymbolicLink(linkPath, gitSrcPath)
+                } catch (_: Exception) {
+                    gitBin.copyTo(linkPath.toFile(), overwrite = false)
+                    linkPath.toFile().setExecutable(true)
+                }
+            }
+        }
+        log("git-core: ${GIT_SUBCOMMANDS.size} comandos configurados")
+    }
+
+    private fun testGitVersion(nativeDir: File, libDir: File, gitCoreDir: File) {
+        val gitPath = File(gitCoreDir, "git").absolutePath
+        val ldPath  = "${nativeDir.absolutePath}:${libDir.absolutePath}"
+
+        val pb = ProcessBuilder(gitPath, "--version")
+        pb.directory(gitCoreDir)
+        pb.redirectErrorStream(true)
+        pb.environment().apply {
+            put("LD_LIBRARY_PATH", ldPath)
+            put("GIT_EXEC_PATH", gitCoreDir.absolutePath)
+            put("HOME", filesDir.absolutePath)
+            put("TMPDIR", cacheDir.absolutePath)
+        }
+
+        val process = pb.start()
+        val output  = process.inputStream.bufferedReader().readText().trim()
+        val exit    = process.waitFor()
+
+        if (exit != 0) {
+            error("git --version falhou (exit $exit):\n$output")
+        }
+        log(output)
     }
 
     private fun testNodeVersion(nativeDir: File, libDir: File) {

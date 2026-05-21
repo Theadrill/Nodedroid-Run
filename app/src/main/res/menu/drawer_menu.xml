@@ -4,6 +4,9 @@
         android:id="@+id/nav_login"
         android:title="Login GitHub" />
     <item
+        android:id="@+id/nav_test_git"
+        android:title="Testar Git" />
+    <item
         android:id="@+id/nav_add_project"
         android:title="Adicionar Projeto" />
 </menu>

@@ -23,6 +23,8 @@ object GitHubOAuth {
     private const val PREF_NAME = "github_oauth"
     private const val KEY_TOKEN = "access_token"
     private const val KEY_USER = "user_login"
+    private const val KEY_NAME = "user_name"
+    private const val KEY_EMAIL = "user_email"
     private const val KEY_STATE = "oauth_state"
 
     private var currentState: String? = null
@@ -117,9 +119,14 @@ object GitHubOAuth {
 
             val json = org.json.JSONObject(response)
             val login = if (json.has("login")) json.getString("login") else null
-            if (login != null) {
-                getSecurePrefs(context).edit().putString(KEY_USER, login).apply()
-            }
+            val name  = if (json.has("name") && !json.isNull("name")) json.getString("name") else null
+            val email = if (json.has("email") && !json.isNull("email")) json.getString("email") else null
+
+            val editor = getSecurePrefs(context).edit()
+            if (login != null) editor.putString(KEY_USER, login)
+            if (name != null)  editor.putString(KEY_NAME, name)
+            if (email != null) editor.putString(KEY_EMAIL, email)
+            editor.apply()
         } catch (_: Exception) { }
     }
 
@@ -135,11 +142,31 @@ object GitHubOAuth {
         return getSecurePrefs(context).getString(KEY_USER, null)
     }
 
+    fun getUserName(context: Context): String? {
+        return getSecurePrefs(context).getString(KEY_NAME, null)
+            ?: getUserLogin(context)
+    }
+
+    fun getUserEmail(context: Context): String? {
+        return getSecurePrefs(context).getString(KEY_EMAIL, null)
+    }
+
+    fun getGitEmail(context: Context): String {
+        val login = getUserLogin(context) ?: return "nodeapp@localhost"
+        return getUserEmail(context)
+            ?: "${login}@users.noreply.github.com"
+    }
+
     fun isLoggedIn(context: Context): Boolean {
         return getToken(context) != null
     }
 
     fun logout(context: Context) {
-        getSecurePrefs(context).edit().remove(KEY_TOKEN).remove(KEY_USER).apply()
+        getSecurePrefs(context).edit()
+            .remove(KEY_TOKEN)
+            .remove(KEY_USER)
+            .remove(KEY_NAME)
+            .remove(KEY_EMAIL)
+            .apply()
     }
 }

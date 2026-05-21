@@ -131,6 +131,14 @@ Os seguintes pacotes `.deb` foram baixados do repositório `packages.termux.dev`
 | `libnghttp2` | 1.69.0 | HTTP/2 (`libnghttp2.so`) |
 | `libc++` | 29 | Biblioteca C++ (`libc++_shared.so`) |
 | `zlib` | 1.3.2 | Compressão (`libz.so.X`) |
+| `git` | 2.54.0 | Binário principal do Git (`libgit.so`) |
+| `libcurl` | 8.20.0 | HTTPS (`libcurl.so`, depende de libssh2, libnghttp3, libngtcp2) |
+| `libiconv` | 1.18-1 | Conversão de charset (`libiconv.so`) |
+| `libssh2` | 1.11.1-1 | SSH para libcurl (`libssh2.so`) |
+| `libnghttp3` | 1.15.0 | HTTP/3 para libcurl (`libnghttp3.so`) |
+| `libngtcp2` | 1.22.1 | QUIC + crypto OSSL para libcurl (`libngtcp2.so`, `libngtcp2_crypto_ossl.so`) |
+| `pcre2` | 10.47 | Regex (`libpcre2-8.so`) |
+| `libexpat` | 2.8.1 | XML parsing — git-http-push (`libexpat.so`) | |
 
 ### 6.3. Distribuição via jniLibs (Direto no APK)
 Os `.so` extraídos dos `.deb` são colocados diretamente em `app/src/main/jniLibs/<abi>/`. O Android empacota e instala automaticamente no `nativeLibraryDir` do app. Não há download externo — tudo vem dentro do APK.
@@ -149,6 +157,7 @@ Para cada arquitetura suportada, existe uma pasta em `jniLibs/`:
 ### 6.4. Conteúdo de Cada jniLibs (arm64-v8a)
 Os arquivos ficam em `app/src/main/jniLibs/arm64-v8a/` e são instalados automaticamente pelo Android no `nativeLibraryDir`, que é **sempre executável** (sem restrição noexec):
 
+**Node.js e dependências:**
 | Arquivo .so | Origem | Tamanho |
 |-------------|--------|---------|
 | `libnode.so` | `node` (renomeado) | ~47MB |
@@ -158,6 +167,7 @@ Os arquivos ficam em `app/src/main/jniLibs/arm64-v8a/` e são instalados automat
 | `libffi.so` | `libffi` | ~84KB |
 | `libicudata.so` | `icu` | ~31MB |
 | `libicui18n.so` | `icu` | ~3.2MB |
+| `libicutu.so` | `icu` | ~224KB |
 | `libicuuc.so` | `icu` | ~1.9MB |
 | `libnghttp2.so` | `libnghttp2` | ~156KB |
 | `libssl.so` | `openssl` | ~854KB |
@@ -166,6 +176,21 @@ Os arquivos ficam em `app/src/main/jniLibs/arm64-v8a/` e são instalados automat
 | `libcapi.so` | `nodejs` | ~4KB |
 | `liblegacy.so` | `nodejs` | ~121KB |
 | `libloader_attic.so` | `nodejs` | ~42KB |
+| `libsqlite3.so` | `sqlite` | ~1.2MB |
+| `libsqlite3.53.1.so` | `sqlite` | ~1.2MB |
+
+**Git e dependências:**
+| Arquivo .so | Origem | Tamanho |
+|-------------|--------|---------|
+| `libgit.so` | `git` (renomeado) | ~3.4MB |
+| `libcurl.so` | `libcurl` | ~897KB |
+| `libiconv.so` | `libiconv` | ~1.1MB |
+| `libssh2.so` | `libssh2` | ~242KB |
+| `libnghttp3.so` | `libnghttp3` | ~149KB |
+| `libngtcp2.so` | `libngtcp2` | ~311KB |
+| `libngtcp2_crypto_ossl.so` | `libngtcp2` | ~42KB |
+| `libpcre2-8.so` | `pcre2` | ~478KB |
+| `libexpat.so` | `libexpat` | ~138KB |
 
 **IMPORTANTE — Aliases versionados:** O jniLibs só aceita nomes `lib*.so` sem sufixo de versão. Mas o `node` binário procura pelos nomes versionados (`libz.so.1`, `libssl.so.3`, `libicuuc.so.78`, etc.). A solução é o `SetupActivity` copiar os arquivos para `filesDir/lib/` com os nomes versionados corretos. O `dlopen()` **não é bloqueado** por `noexec` (apenas `execve()` é).
 
@@ -177,7 +202,15 @@ libcrypto.so  → libcrypto.so.3
 libicui18n.so → libicui18n.so.78
 libicuuc.so   → libicuuc.so.78
 libicudata.so → libicudata.so.78
+libsqlite3.so → libsqlite3.so.0
+libexpat.so   → libexpat.so.1
 ```
+
+### 6.5. Estratégia de Distribuição do Git
+
+O git precisa de ~150 sub-comandos (git-status, git-clone, git-remote-https, etc.) para funcionar — todos são o mesmo binário. Em vez de empacotá-los individualmente no APK, o `SetupActivity` cria **symlinks** em `filesDir/git-core/` apontando para `nativeLibraryDir/libgit.so`. Quando o kernel resolve o symlink, a verificação de permissão de execução é feita no destino (`nativeLibraryDir`, sempre executável), contornando restrições `noexec` no `filesDir`.
+
+O `ProcessManager` injeta `GIT_EXEC_PATH=filesDir/git-core/` em todo processo, e o `HOME=filesDir` faz o git ler o `.gitconfig` global.
 
 `LD_LIBRARY_PATH = nativeLibraryDir:filesDir/lib`
 
@@ -194,27 +227,27 @@ Nodedroid-Run/
 │   └── src/main/
 │       ├── AndroidManifest.xml       ← Permissões, SetupActivity como Launcher, NodeService
 │       ├── jniLibs/
-│       │   ├── arm64-v8a/            ← .so para ARM64 (libnode.so + dependências)
-│       │   └── x86_64/               ← .so para x86_64 (emuladores)
+│       │   ├── arm64-v8a/            ← 27 .so (Node.js + Git + dependências)
+│       │   └── x86_64/               ← 19 .so (Node.js + Git + dependências)
 │       ├── java/com/example/nodedroidrun/
-│       │   ├── SetupActivity.kt      ← Cria aliases versionados das .so, valida libnode.so
+│       │   ├── SetupActivity.kt      ← Aliases versionados, valida node + git, symlinks git-core
 │       │   ├── NodeService.kt        ← ForegroundService com notificação persistente
-│       │   ├── ProcessManager.kt     ← Singleton gerenciador de processos com env vars
-│       │   └── MainActivity.kt       ← Tela principal com terminal, startup sequence 6 passos
-│       └── res/layout/
-│           ├── activity_setup.xml    ← Layout dark-themed com ProgressBar
-│           └── activity_main.xml     ← Layout com terminal, badge de status, barra de portas
+│       │   ├── ProcessManager.kt     ← Singleton gerenciador de processos + GIT_EXEC_PATH
+│       │   ├── GitHubOAuth.kt        ← OAuth2 GitHub + user name/email para git config
+│       │   └── MainActivity.kt       ← Menu lateral, login GitHub, testar git, placeholder projetos
+│       └── res/
+│           ├── layout/
+│           │   ├── activity_setup.xml
+│           │   ├── activity_main.xml
+│           │   └── nav_header.xml
+│           └── menu/
+│               └── drawer_menu.xml   ← Login GitHub, Testar Git, Adicionar Projeto
 ├── docs/
 │   └── plano-do-projeto.md           ← Este arquivo
 ├── local.properties                  ← SDK path + credenciais OAuth (NÃO commitar)
 └── binaries-temp/                    ← Pasta temporária local (NÃO commitar)
-    ├── *.deb                         ← Pacotes .deb do Termux baixados
-    ├── extracted/<arch>/             ← .deb extraídos + collect/ com artefatos finais
-    └── zips/                         ← ZIPs consolidados (referência para GitHub Releases)
-        ├── binaries-aarch64.zip
-        ├── binaries-arm.zip
-        ├── binaries-x86_64.zip
-        └── binaries-i686.zip
+    ├── git-debs/                     ← Pacotes .deb do Git e dependências
+    └── git-extracted/                ← Conteúdo extraído dos .deb
 ```
 
 ### 7.2. Permissões no AndroidManifest.xml
@@ -258,8 +291,11 @@ Nodedroid-Run/
 *   [x] Validado em dispositivo físico: libs .so carregam sem erro de linker.
 
 ### 🔲 Fase 3: Autenticação e Repositórios
-*   [ ] Implementar fluxo OAuth2 com GitHub (Custom Tabs + callback URI scheme).
-*   [ ] Armazenar Access Token com `EncryptedSharedPreferences`.
+*   [x] Implementar fluxo OAuth2 com GitHub (Custom Tabs + callback URI scheme).
+*   [x] Armazenar Access Token com `EncryptedSharedPreferences`.
+*   [x] Salvar name + email do `/user` para configuração automática do git (`user.name`, `user.email`).
+*   [x] Integração do binário Git v2.54.0 (Termux) nos jniLibs com symlinks em filesDir/git-core/.
+*   [x] Botão "Testar Git" no menu lateral — fluxo completo: login → config git → testar comandos (init, add, commit, log).
 *   [ ] Menu lateral com lista de projetos clonados.
 *   [ ] Tela inicial vazia com placeholder: *"Sua lista de projetos está vazia — adicione um repositório ou clone do GitHub."*
 *   [ ] Botão "Adicionar Projeto" com duas opções:
@@ -288,3 +324,4 @@ Nodedroid-Run/
 ## Atualização
 
 - 2026-05-21: Atualização da documentação — anotações e pequenas correções no plano do projeto. Commit e sincronização realizados.
+- 2026-05-21: Integração do binário Git v2.54.0 (Termux) + dependências (libcurl, libiconv, libssh2, libnghttp3, libngtcp2, pcre2, libexpat). Estratégia de symlinks em filesDir/git-core/ → nativeLibraryDir/libgit.so para contornar noexec. SetupActivity valida node + git. ProcessManager injeta GIT_EXEC_PATH. Botão "Testar Git" no menu lateral com fluxo de login/config/teste. `.gitconfig` escrito em filesDir com name/email do OAuth. Build e testes locais validados em dispositivo físico.

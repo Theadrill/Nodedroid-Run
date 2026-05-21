@@ -23,6 +23,14 @@ object ProcessManager {
     fun getNodePath(context: Context): String =
         File(getBinDir(context), "libnode.so").absolutePath
 
+    /** Caminho para o executável git (hardlink em filesDir/git-core/git). */
+    fun getGitPath(context: Context): String =
+        File(context.filesDir, "git-core/git").absolutePath
+
+    /** Diretório git-core com os sub-comandos (hardlinks). */
+    fun getGitCoreDir(context: Context): File =
+        File(context.filesDir, "git-core")
+
     /**
      * Inicia um processo com as variáveis de ambiente corretas para os binários do Termux.
      * @param context  Contexto do Android para resolver os caminhos.
@@ -52,6 +60,7 @@ object ProcessManager {
                     put("HOME", context.filesDir.absolutePath)
                     put("TMPDIR", context.cacheDir.absolutePath)
                     put("NODE_PATH", "${context.filesDir.absolutePath}/node_modules")
+                    put("GIT_EXEC_PATH", "${context.filesDir.absolutePath}/git-core")
                 }
             }
             val process = pb.start()
