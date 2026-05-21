@@ -97,6 +97,9 @@ class SetupActivity : AppCompatActivity() {
                 step("Verificando Git...")
                 testGitVersion(nativeDir, libDir, gitCoreDir)
 
+                step("Instalando npm...")
+                setupNpm()
+
                 step("Preparando servidor de validação...")
                 val serverFile = writeServerJs()
 
@@ -175,6 +178,36 @@ class SetupActivity : AppCompatActivity() {
             } catch (_: Exception) {
                 log("cert.pem não encontrado em assets — HTTPS pode falhar")
             }
+        }
+    }
+
+    private fun setupNpm() {
+        val npmDir = File(filesDir, "node_modules/npm")
+        if (npmDir.isDirectory && npmDir.listFiles()?.isNotEmpty() == true) return
+        npmDir.mkdirs()
+
+        try {
+            assets.open("npm.zip").use { zipInput ->
+                java.util.zip.ZipInputStream(zipInput).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null) {
+                        val file = File(npmDir, entry.name)
+                        if (entry.isDirectory) {
+                            file.mkdirs()
+                        } else {
+                            file.parentFile?.mkdirs()
+                            file.outputStream().use { fos ->
+                                zis.copyTo(fos)
+                            }
+                        }
+                        zis.closeEntry()
+                        entry = zis.nextEntry
+                    }
+                }
+            }
+            log("npm instalado (${npmDir.listFiles()?.size ?: 0} itens)")
+        } catch (_: Exception) {
+            log("npm.zip não encontrado em assets — npm não disponível")
         }
     }
 

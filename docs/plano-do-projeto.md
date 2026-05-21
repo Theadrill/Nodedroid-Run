@@ -206,13 +206,27 @@ libsqlite3.so → libsqlite3.so.0
 libexpat.so   → libexpat.so.1
 ```
 
-### 6.5. Estratégia de Distribuição do Git
+### 6.5. Estratégia "noexec" — Execução de Binários no filesDir
 
-O git precisa de ~150 sub-comandos (git-status, git-clone, git-remote-https, etc.) para funcionar — todos são o mesmo binário. Em vez de empacotá-los individualmente no APK, o `SetupActivity` cria **symlinks** em `filesDir/git-core/` apontando para `nativeLibraryDir/libgit.so`. Quando o kernel resolve o symlink, a verificação de permissão de execução é feita no destino (`nativeLibraryDir`, sempre executável), contornando restrições `noexec` no `filesDir`.
+**Problema:** Em alguns dispositivos Android, o `filesDir` (`/data/data/<pkg>/files/`) é montado com a flag `noexec`, bloqueando `execve()` e resultando em `error=13, Permission denied`.
 
-O `ProcessManager` injeta `GIT_EXEC_PATH=filesDir/git-core/` em todo processo, e o `HOME=filesDir` faz o git ler o `.gitconfig` global.
+**Solução — Symlinks para nativeLibraryDir:** Em vez de copiar binários para `filesDir` e executá-los de lá, o `SetupActivity` cria **symlinks** no `filesDir` apontando para `nativeLibraryDir` (`/data/app/<pkg>/lib/<abi>/`), que é **sempre executável**. Quando o kernel resolve o symlink, a verificação de permissão de execução (`execve`) é feita no destino (`nativeLibraryDir`), não no link. O `filesDir` só precisa suportar symlinks e leitura — o ext4 do armazenamento privado do app garante ambos.
+
+**Aplicação:**
+| Binário | Symlink em filesDir | Alvo em nativeLibraryDir |
+|---|---|---|
+| `git` + 149 sub-comandos | `filesDir/git-core/git*` | `nativeLibraryDir/libgit.so` |
+| 7 binários especiais (com libcurl) | `filesDir/git-core/git-remote-https` etc. | `nativeLibraryDir/libgit_remote_https.so` etc. |
+
+Fallback: se `Files.createSymbolicLink()` falhar (ex: filesystem sem suporte), o código tenta `copyTo()` + `setExecutable()`.
+
+O `ProcessManager` injeta `GIT_EXEC_PATH=filesDir/git-core/` em todo processo, e `HOME=filesDir` faz o git ler o `.gitconfig` global.
 
 `LD_LIBRARY_PATH = nativeLibraryDir:filesDir/lib`
+
+### 6.6. Estratégia para Scripts (npm)
+
+Scripts shell (`#!/bin/sh`) não podem usar symlinks porque o interpretador (`sh`) precisa ler o arquivo. A solução para npm é invocá-lo via node diretamente: `node filesDir/node_modules/npm/bin/npm-cli.js <args>`, sem shell intermediário.
 
 
 ---
@@ -358,7 +372,7 @@ filesDir/
     — Se existir, o menu popup carrega do JSON em vez dos defaults hardcoded.
     — Permite que a configuração viaje com o repositório entre dispositivos.
 *   [x] Botão "Clonar do GitHub" → listar repositórios do usuário via API (`/user/repos`) para seleção direta, sem precisar colar URL.
-*   [ ] Integração do npm (módulo + entrypoint extraídos do pacote nodejs do Termux, `NODE_PATH` redirecionado).
+*   [x] Integração do npm (módulo + entrypoint extraídos do pacote npm do Termux, `NODE_PATH` redirecionado).
 *   [ ] Abas de terminais independentes por projeto (`TabLayout` + `ViewPager2`).
 *   [ ] Painel Git: parsing de `git status --porcelain` para popular `RecyclerView`.
 *   [ ] Ações: `git add`, `git commit`, `git push`, `git pull`, revert por arquivo.

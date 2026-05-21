@@ -268,7 +268,16 @@ class MainActivity : AppCompatActivity() {
         val nativeDir = applicationInfo.nativeLibraryDir
         val libDir = File(filesDir, "lib")
         val ldPath = "$nativeDir:${libDir.absolutePath}"
+        val nodePath = File(nativeDir, "libnode.so").absolutePath
+        val npmCliJs = File(filesDir, "node_modules/npm/bin/npm-cli.js").absolutePath
         val workDir = File(project.path)
+
+        val cmd: List<String> = if (label.startsWith("npm ")) {
+            val npmArgs = label.removePrefix("npm ")
+            listOf(nodePath, npmCliJs, "--scripts-prepend-node-path=true") + npmArgs.split(" ")
+        } else {
+            listOf("sh", "-c", "cd \"${workDir.absolutePath}\" && $label 2>&1")
+        }
 
         val progressDialog = AlertDialog.Builder(this)
             .setTitle(project.name)
@@ -281,7 +290,7 @@ class MainActivity : AppCompatActivity() {
             val output = StringBuilder()
             try {
                 withContext(Dispatchers.IO) {
-                    val pb = ProcessBuilder("sh", "-c", "cd \"${workDir.absolutePath}\" && $label 2>&1").apply {
+                    val pb = ProcessBuilder(cmd).apply {
                         directory(workDir)
                         redirectErrorStream(true)
                         environment().apply {
@@ -289,6 +298,7 @@ class MainActivity : AppCompatActivity() {
                             put("PATH", "$nativeDir:${get("PATH") ?: "/system/bin"}")
                             put("HOME", filesDir.absolutePath)
                             put("TMPDIR", cacheDir.absolutePath)
+                            put("NODE_PATH", "${filesDir.absolutePath}/node_modules")
                         }
                     }
                     val process = pb.start()
