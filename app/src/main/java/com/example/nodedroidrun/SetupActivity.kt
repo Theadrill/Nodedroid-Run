@@ -27,6 +27,7 @@ class SetupActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_setup)
+        window.statusBarColor = android.graphics.Color.parseColor("#FF1A1A1A")
 
         progressBar  = findViewById(R.id.progress_bar)
         txtStatus    = findViewById(R.id.txt_status)
