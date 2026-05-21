@@ -39,9 +39,14 @@ O design visa altíssimo desempenho, uso do ecossistema Linux/POSIX no armazenam
 A interface deve ser desenhada para desenvolvedores, lembrando o layout produtivo de IDEs.
 
 ### 3.1. Navegação Principal (Menu Lateral / Drawer)
-*   Menu lateral (`NavigationView` ou `ModalNavigationDrawer`) contendo a lista de todos os projetos (repositórios) clonados no dispositivo.
-*   Botão global para "Adicionar Projeto" (Clone do GitHub).
+*   Menu lateral (`NavigationView` ou `ModalNavigationDrawer`) contendo:
+    *   Botão "Login GitHub" (se não autenticado).
+    *   Lista de todos os projetos (repositórios) clonados no dispositivo.
+*   Botão global "Adicionar Projeto" com duas opções:
+    1. **Clonar do GitHub** — via OAuth, com suporte completo a push/pull/commit.
+    2. **Clonar via URL HTTP** — sem login, apenas leitura de repositórios públicos.
 *   Ao tocar em um projeto, a interface principal carrega o contexto (Dashboard) daquele repositório.
+*   **Tela inicial (lista vazia):** exibe o placeholder *"Sua lista de projetos está vazia — adicione um repositório ou clone do GitHub."*
 
 ### 3.2. Dashboard do Projeto (Contexto Ativo)
 O Dashboard será dividido visualmente em duas áreas principais:
@@ -239,13 +244,15 @@ Nodedroid-Run/
 *   [x] Desenvolver UI de terminal simplificada (ScrollView + TextView monospace).
 *   [x] Ligar stdout do processo filho à tela do terminal em tempo real.
 *   [x] Escrever `server.js` (Hello World na porta 4150) programaticamente em `filesDir`.
-*   [x] `MainActivity` implementada com startup sequence passo a passo:
-    1. Info do dispositivo (modelo, API, ABI)
-    2. Verificação dos binários instalados + lista de .so
-    3. Teste de `node --version`
-    4. Escrita do `server.js`
-    5. Inicialização do servidor
-    6. Leitura do stdout em tempo real
+*   [x] `SetupActivity` implementada com validação completa e invisível ao usuário:
+    1. Validação dos binários (.so) + aliases versionados
+    2. Teste de `node --version`
+    3. Escrita e execução do `server.js`
+    4. Checagem da resposta HTTP em `http://localhost:4150`
+    5. Finalização do processo do server.js
+    6. Se sucesso → navega para `MainActivity`
+    7. Se erro → exibe log técnico na tela e trava
+*   [x] `MainActivity` implementada como tela principal com menu lateral (botão login GitHub, lista de projetos)
 *   [x] Validado em dispositivo físico: `node --version` retorna `v26.1.0`.
 *   [x] Validado em dispositivo físico: servidor HTTP responde em `http://localhost:4150`.
 *   [x] Validado em dispositivo físico: libs .so carregam sem erro de linker.
@@ -253,8 +260,12 @@ Nodedroid-Run/
 ### 🔲 Fase 3: Autenticação e Repositórios
 *   [ ] Implementar fluxo OAuth2 com GitHub (Custom Tabs + callback URI scheme).
 *   [ ] Armazenar Access Token com `EncryptedSharedPreferences`.
-*   [ ] Implementar `git clone` com token injetado na URL.
 *   [ ] Menu lateral com lista de projetos clonados.
+*   [ ] Tela inicial vazia com placeholder: *"Sua lista de projetos está vazia — adicione um repositório ou clone do GitHub."*
+*   [ ] Botão "Adicionar Projeto" com duas opções:
+      1. **Clonar do GitHub** (requer login OAuth) — clona e permite gerenciar (push/pull/commit).
+      2. **Clonar via URL HTTP** (não requer login) — útil para repositórios públicos; sem suporte a push/pull sem credenciais.
+*   [ ] Implementar `git clone` (com ou sem token conforme o método escolhido).
 
 ### 🔲 Fase 4: Gerenciamento do Projeto (Dashboard)
 *   [ ] Abas de terminais independentes por projeto (`TabLayout` + `ViewPager2`).
