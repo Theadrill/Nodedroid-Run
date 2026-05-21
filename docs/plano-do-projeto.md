@@ -226,15 +226,19 @@ Nodedroid-Run/
 │   ├── build.gradle.kts              ← BuildConfig com CLIENT_ID e CLIENT_SECRET injetados
 │   └── src/main/
 │       ├── AndroidManifest.xml       ← Permissões, SetupActivity como Launcher, NodeService
+│       ├── assets/
+│       │   └── cert.pem              ← Mozilla CA bundle (226KB)
 │       ├── jniLibs/
-│       │   ├── arm64-v8a/            ← 27 .so (Node.js + Git + dependências)
-│       │   └── x86_64/               ← 19 .so (Node.js + Git + dependências)
+│       │   ├── arm64-v8a/            ← 34 .so (Node.js + Git + deps + 7 git especiais)
+│       │   └── x86_64/               ← 26 .so (Node.js + Git + deps + 7 git especiais)
 │       ├── java/com/example/nodedroidrun/
-│       │   ├── SetupActivity.kt      ← Aliases versionados, valida node + git, symlinks git-core
+│       │   ├── SetupActivity.kt      ← Aliases, valida node+git, symlinks git-core, cert.pem
 │       │   ├── NodeService.kt        ← ForegroundService com notificação persistente
-│       │   ├── ProcessManager.kt     ← Singleton gerenciador de processos + GIT_EXEC_PATH
-│       │   ├── GitHubOAuth.kt        ← OAuth2 GitHub + user name/email para git config
-│       │   └── MainActivity.kt       ← Menu lateral, login GitHub, testar git, placeholder projetos
+│       │   ├── ProcessManager.kt     ← Singleton processos + GIT_EXEC_PATH + GIT_SSL_CAINFO
+│       │   ├── GitHubOAuth.kt        ← OAuth2 GitHub + user name/email
+│       │   ├── Project.kt            ← Data class: id, name, path, cloneUrl, source
+│       │   ├── ProjectManager.kt     ← Singleton: load/save/add/remove projects.json
+│       │   └── MainActivity.kt       ← Drawer, login, testar git, adicionar/clonar/remover projetos
 │       └── res/
 │           ├── layout/
 │           │   ├── activity_setup.xml
@@ -257,6 +261,35 @@ Nodedroid-Run/
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 ```
+
+### 7.3. Variáveis de Ambiente Injetadas (ProcessManager)
+
+Todo processo criado pelo `ProcessManager` recebe:
+
+```
+LD_LIBRARY_PATH   = nativeLibraryDir:filesDir/lib
+PATH              = nativeLibraryDir:/system/bin
+HOME              = filesDir/
+TMPDIR            = cacheDir/
+NODE_PATH         = filesDir/node_modules
+GIT_EXEC_PATH     = filesDir/git-core/
+GIT_SSL_CAINFO    = filesDir/tls/cert.pem
+CURL_CA_BUNDLE    = filesDir/tls/cert.pem
+```
+
+### 7.4. Estrutura do filesDir Após Setup
+
+```
+filesDir/
+├── .gitconfig         ← user.name/email do OAuth
+├── git-core/          ← 156 symlinks → nativeLibraryDir/lib*.so
+├── lib/               ← aliases versionados (libz.so.1, libssl.so.3, etc.)
+├── tls/
+│   └── cert.pem       ← Mozilla CA bundle (226KB, assets → copiado no setup)
+├── projects/          ← repositórios clonados
+│   ├── <id8>/
+│   └── ...
+└── projects.json      ← metadados dos projetos
 
 ---
 
@@ -290,18 +323,23 @@ Nodedroid-Run/
 *   [x] Validado em dispositivo físico: servidor HTTP responde em `http://localhost:4150`.
 *   [x] Validado em dispositivo físico: libs .so carregam sem erro de linker.
 
-### 🔲 Fase 3: Autenticação e Repositórios
+### ✅ Fase 3: Autenticação e Repositórios — CONCLUÍDA
 *   [x] Implementar fluxo OAuth2 com GitHub (Custom Tabs + callback URI scheme).
 *   [x] Armazenar Access Token com `EncryptedSharedPreferences`.
 *   [x] Salvar name + email do `/user` para configuração automática do git (`user.name`, `user.email`).
-*   [x] Integração do binário Git v2.54.0 (Termux) nos jniLibs com symlinks em filesDir/git-core/.
+*   [x] Integração do binário Git v2.54.0 (Termux) + 7 binários especiais (git-remote-https/http, etc.) nos jniLibs.
+*   [x] Estratégia de symlinks em filesDir/git-core/ → nativeLibraryDir/libgit.so (ou .so específico para binários com libcurl).
+*   [x] Bundle `cert.pem` (226KB, Mozilla CA bundle) em assets → copiado para filesDir/tls/ durante setup.
+*   [x] `GIT_SSL_CAINFO` e `CURL_CA_BUNDLE` injetados em todos os processos git.
 *   [x] Botão "Testar Git" no menu lateral — fluxo completo: login → config git → testar comandos (init, add, commit, log).
-*   [ ] Menu lateral com lista de projetos clonados.
-*   [ ] Tela inicial vazia com placeholder: *"Sua lista de projetos está vazia — adicione um repositório ou clone do GitHub."*
-*   [ ] Botão "Adicionar Projeto" com duas opções:
-      1. **Clonar do GitHub** (requer login OAuth) — clona e permite gerenciar (push/pull/commit).
-      2. **Clonar via URL HTTP** (não requer login) — útil para repositórios públicos; sem suporte a push/pull sem credenciais.
-*   [ ] Implementar `git clone` (com ou sem token conforme o método escolhido).
+*   [x] Botão "Adicionar Projeto" com duas opções:
+      1. **Clonar do GitHub** (requer login OAuth) — injeta token na URL, clone com progresso.
+      2. **Clonar via URL HTTP** (não requer login) — clone público.
+*   [x] Implementar `git clone` com output em tempo real no dialog de progresso.
+*   [x] Menu lateral com lista de projetos clonados (dinâmico).
+*   [x] Cards de projeto na tela principal com long-press para remover.
+*   [x] Persistência dos projetos em `filesDir/projects.json` via `ProjectManager`.
+*   [x] Validado em dispositivo físico: Git v2.54.0, clone via HTTPS, test suite completa.
 
 ### 🔲 Fase 4: Gerenciamento do Projeto (Dashboard)
 *   [ ] Abas de terminais independentes por projeto (`TabLayout` + `ViewPager2`).
@@ -325,3 +363,4 @@ Nodedroid-Run/
 
 - 2026-05-21: Atualização da documentação — anotações e pequenas correções no plano do projeto. Commit e sincronização realizados.
 - 2026-05-21: Integração do binário Git v2.54.0 (Termux) + dependências (libcurl, libiconv, libssh2, libnghttp3, libngtcp2, pcre2, libexpat). Estratégia de symlinks em filesDir/git-core/ → nativeLibraryDir/libgit.so para contornar noexec. SetupActivity valida node + git. ProcessManager injeta GIT_EXEC_PATH. Botão "Testar Git" no menu lateral com fluxo de login/config/teste. `.gitconfig` escrito em filesDir com name/email do OAuth. Build e testes locais validados em dispositivo físico.
+- 2026-05-21: Fase 3 concluída — 7 binários git especiais (git-remote-https/http/ftp/ftps, git-http-fetch/push, git-imap-send) como .so separados nos jniLibs (linkam com libcurl). Bundle ca-certificates (cert.pem) em assets. GIT_SSL_CAINFO/CURL_CA_BUNDLE em todos os processos. Fluxo "Adicionar Projeto": clonar do GitHub (com token) ou via URL HTTP. Cards de projeto com long-press para remover. Persistência em projects.json. Clone validado em dispositivo físico com HTTPS.

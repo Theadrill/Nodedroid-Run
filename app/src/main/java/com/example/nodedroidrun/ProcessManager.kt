@@ -61,6 +61,8 @@ object ProcessManager {
                     put("TMPDIR", context.cacheDir.absolutePath)
                     put("NODE_PATH", "${context.filesDir.absolutePath}/node_modules")
                     put("GIT_EXEC_PATH", "${context.filesDir.absolutePath}/git-core")
+                    put("GIT_SSL_CAINFO", "${context.filesDir.absolutePath}/tls/cert.pem")
+                    put("CURL_CA_BUNDLE", "${context.filesDir.absolutePath}/tls/cert.pem")
                 }
             }
             val process = pb.start()

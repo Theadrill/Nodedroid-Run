@@ -54,6 +54,9 @@ class SetupActivity : AppCompatActivity() {
                 step("Preparando bibliotecas nativas...")
                 setupNativeLibs(nativeDir, libDir)
 
+                step("Preparando certificados TLS...")
+                setupCerts()
+
                 step("Verificando Node.js...")
                 testNodeVersion(nativeDir, libDir)
 
@@ -128,6 +131,23 @@ class SetupActivity : AppCompatActivity() {
         "git-whatchanged", "git-worktree", "git-write-tree", "scalar"
     )
 
+    private fun setupCerts() {
+        val certDir = File(filesDir, "tls").also { it.mkdirs() }
+        val certFile = File(certDir, "cert.pem")
+        if (!certFile.exists()) {
+            try {
+                assets.open("cert.pem").use { input ->
+                    certFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                log("cert.pem instalado (${certFile.length()} bytes)")
+            } catch (_: Exception) {
+                log("cert.pem não encontrado em assets — HTTPS pode falhar")
+            }
+        }
+    }
+
     private fun setupNativeLibs(nativeDir: File, libDir: File) {
         createVersionedAlias(nativeDir, libDir, "libz.so",        "libz.so.1")
         createVersionedAlias(nativeDir, libDir, "libssl.so",      "libssl.so.3")
@@ -144,11 +164,20 @@ class SetupActivity : AppCompatActivity() {
         }
     }
 
+    private val GIT_SPECIAL_BINARIES = mapOf(
+        "git-remote-https" to "libgit_remote_https.so",
+        "git-remote-http"  to "libgit_remote_http.so",
+        "git-remote-ftp"   to "libgit_remote_ftp.so",
+        "git-remote-ftps"  to "libgit_remote_ftps.so",
+        "git-http-fetch"   to "libgit_http_fetch.so",
+        "git-http-push"    to "libgit_http_push.so",
+        "git-imap-send"    to "libgit_imap_send.so"
+    )
+
     private fun setupGit(nativeDir: File, gitCoreDir: File) {
         val gitSrc  = File(nativeDir, "libgit.so")
         if (!gitSrc.exists()) {
-            log("libgit.so ausente — pulando setup do Git")
-            return
+            error("libgit.so não encontrado em ${gitSrc.absolutePath}\n\nReconstrua o APK: Build → Clean → Rebuild")
         }
         gitCoreDir.mkdirs()
 
@@ -167,8 +196,15 @@ class SetupActivity : AppCompatActivity() {
         for (cmd in GIT_SUBCOMMANDS) {
             val linkPath = gitCoreDir.toPath().resolve(cmd)
             if (!linkPath.toFile().exists()) {
+                val targetPath: Path = if (cmd in GIT_SPECIAL_BINARIES) {
+                    val soName = GIT_SPECIAL_BINARIES[cmd]!!
+                    val soFile = File(nativeDir, soName)
+                    if (!soFile.exists()) gitSrcPath else soFile.toPath()
+                } else {
+                    gitSrcPath
+                }
                 try {
-                    Files.createSymbolicLink(linkPath, gitSrcPath)
+                    Files.createSymbolicLink(linkPath, targetPath)
                 } catch (_: Exception) {
                     gitBin.copyTo(linkPath.toFile(), overwrite = false)
                     linkPath.toFile().setExecutable(true)
@@ -188,6 +224,7 @@ class SetupActivity : AppCompatActivity() {
         pb.environment().apply {
             put("LD_LIBRARY_PATH", ldPath)
             put("GIT_EXEC_PATH", gitCoreDir.absolutePath)
+            put("GIT_SSL_CAINFO", "${filesDir.absolutePath}/tls/cert.pem")
             put("HOME", filesDir.absolutePath)
             put("TMPDIR", cacheDir.absolutePath)
         }

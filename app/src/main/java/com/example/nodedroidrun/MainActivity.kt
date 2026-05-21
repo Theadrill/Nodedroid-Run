@@ -1,8 +1,13 @@
 package com.example.nodedroidrun
 
-import android.content.DialogInterface
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.View
+import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -19,8 +24,16 @@ import java.io.FileWriter
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        private const val GROUP_PROJECTS = 999
+    }
+
     private lateinit var navView: NavigationView
+    private lateinit var projectsList: LinearLayout
+    private lateinit var placeholder: TextView
+    private lateinit var projectsScroll: ScrollView
     private var pendingGitTest = false
+    private var projects = listOf<Project>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,6 +43,11 @@ class MainActivity : AppCompatActivity() {
         drawerLayout.setStatusBarBackgroundColor(android.graphics.Color.parseColor("#FF1A1A1A"))
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
         window.statusBarColor = android.graphics.Color.parseColor("#FF1A1A1A")
+
+        projectsList = findViewById(R.id.projects_list)
+        placeholder = findViewById(R.id.placeholder)
+        projectsScroll = findViewById(R.id.projects_scroll)
+
         navView = findViewById(R.id.nav_view)
         navView.post {
             val header = navView.getHeaderView(0)
@@ -39,21 +57,20 @@ class MainActivity : AppCompatActivity() {
             header.setPadding(horizontalPadding, statusBarHeight, horizontalPadding, horizontalPadding)
         }
         val btnMenu = findViewById<TextView>(R.id.btn_menu)
-
         btnMenu.setOnClickListener { drawerLayout.open() }
 
         navView.setNavigationItemSelectedListener { item ->
             when (item.itemId) {
                 R.id.nav_login -> handleLoginClick()
                 R.id.nav_test_git -> handleTestGitClick()
-                R.id.nav_add_project -> {
-                    Toast.makeText(this, "Em breve...", Toast.LENGTH_SHORT).show()
-                }
+                R.id.nav_add_project -> handleAddProjectClick()
             }
             drawerLayout.close()
             updateMenuTitles()
             true
         }
+
+        refreshProjects()
 
         handleOAuthCallback(intent)
         updateMenuTitles()
@@ -117,6 +134,242 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // --- Projetos ---
+
+    private fun refreshProjects() {
+        projects = ProjectManager.load(this)
+        rebuildDrawerProjects()
+        rebuildContentProjects()
+    }
+
+    private fun rebuildDrawerProjects() {
+        val menu = navView.menu
+        menu.removeGroup(GROUP_PROJECTS)
+
+        menu.add(GROUP_PROJECTS, View.generateViewId(), 1, "Projetos")
+            .setEnabled(false)
+
+        if (projects.isEmpty()) {
+            menu.add(GROUP_PROJECTS, View.generateViewId(), 2, "  (nenhum)")
+                .setEnabled(false)
+        } else {
+            for (p in projects) {
+                menu.add(GROUP_PROJECTS, View.generateViewId(), 2, "  ${p.name}")
+                    .setEnabled(false)
+            }
+        }
+    }
+
+    private fun rebuildContentProjects() {
+        projectsList.removeAllViews()
+        if (projects.isEmpty()) {
+            placeholder.visibility = View.VISIBLE
+            projectsScroll.visibility = View.GONE
+        } else {
+            placeholder.visibility = View.GONE
+            projectsScroll.visibility = View.VISIBLE
+            for (p in projects) {
+                projectsList.addView(createProjectCard(p))
+            }
+        }
+    }
+
+    private fun createProjectCard(project: Project): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dp, 12.dp, 16.dp, 12.dp)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp }
+            setBackgroundColor(android.graphics.Color.parseColor("#1A1A1A"))
+        }
+
+        val nameView = TextView(this).apply {
+            text = project.name
+            textSize = 15f
+            setTextColor(android.graphics.Color.parseColor("#E8E8E8"))
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        card.addView(nameView)
+
+        val metaView = TextView(this).apply {
+            text = "${project.source.uppercase()} · ${project.cloneUrl}"
+            textSize = 11f
+            setTextColor(android.graphics.Color.parseColor("#888888"))
+            typeface = android.graphics.Typeface.MONOSPACE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 4.dp }
+        }
+        card.addView(metaView)
+
+        card.setOnClickListener {
+            Toast.makeText(this, "Abrindo: ${project.name}", Toast.LENGTH_SHORT).show()
+        }
+
+        card.setOnLongClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Remover projeto")
+                .setMessage("Remover \"${project.name}\"? A pasta local será deletada.")
+                .setPositiveButton("Remover") { _, _ ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        ProjectManager.remove(this@MainActivity, project)
+                        withContext(Dispatchers.Main) { refreshProjects() }
+                    }
+                }
+                .setNegativeButton("Cancelar", null)
+                .show()
+            true
+        }
+
+        return card
+    }
+
+    private val Int.dp: Int get() = (this * resources.displayMetrics.density).toInt()
+
+    // --- Adicionar Projeto ---
+
+    private fun handleAddProjectClick() {
+        val items = if (GitHubOAuth.isLoggedIn(this)) {
+            arrayOf("Clonar do GitHub (com token)", "Clonar via URL HTTP (sem token)")
+        } else {
+            arrayOf("Clonar via URL HTTP")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Adicionar Projeto")
+            .setItems(items) { _, which ->
+                val useToken = GitHubOAuth.isLoggedIn(this) && which == 0
+                showCloneUrlDialog(useToken)
+            }
+            .show()
+    }
+
+    private fun showCloneUrlDialog(useToken: Boolean) {
+        val input = EditText(this).apply {
+            hint = "https://github.com/usuario/repo.git"
+            setTextColor(android.graphics.Color.parseColor("#E8E8E8"))
+            setHintTextColor(android.graphics.Color.parseColor("#666666"))
+            setBackgroundColor(android.graphics.Color.parseColor("#1A1A1A"))
+            setPadding(24, 16, 24, 16)
+        }
+
+        val label = if (useToken) "URL do repositório GitHub:" else "URL do repositório:"
+
+        AlertDialog.Builder(this)
+            .setTitle(label)
+            .setView(input)
+            .setPositiveButton("Clonar") { _, _ ->
+                val url = input.text.toString().trim()
+                if (url.isNotEmpty()) {
+                    startClone(url, useToken)
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun startClone(cloneUrl: String, useToken: Boolean) {
+        val output = StringBuilder()
+        val mainHandler = Handler(Looper.getMainLooper())
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle("Clonando...")
+            .setMessage("Conectando ao repositório...")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
+
+        lifecycleScope.launch {
+            try {
+                val project = withContext(Dispatchers.IO) {
+                    val token = if (useToken) GitHubOAuth.getToken(this@MainActivity) else null
+                    cloneRepo(cloneUrl, token) { line ->
+                        mainHandler.post {
+                            output.appendLine(line)
+                            val lastLine = output.lines().lastOrNull { it.isNotBlank() } ?: line
+                            progressDialog.setMessage(lastLine.take(80))
+                        }
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    progressDialog.dismiss()
+                    if (project != null) {
+                        ProjectManager.add(this@MainActivity, project)
+                        refreshProjects()
+                        Toast.makeText(this@MainActivity, "Projeto \"${project.name}\" clonado!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        showOutputDialog("Erro no clone", output.toString().ifEmpty { "Falha ao clonar. Verifique a URL." })
+                    }
+                }
+            } catch (e: Exception) {
+                progressDialog.dismiss()
+                showOutputDialog("Erro no clone", "ERRO: ${e.message}")
+            }
+        }
+    }
+
+    private fun cloneRepo(
+        cloneUrl: String,
+        token: String?,
+        onLine: (String) -> Unit
+    ): Project? {
+        val name = Project.nameFromUrl(cloneUrl)
+        val id = java.util.UUID.randomUUID().toString().take(8)
+        val projectDir = File(ProjectManager.getProjectsDir(this), id)
+        projectDir.mkdirs()
+
+        val url = if (token != null && cloneUrl.contains("github.com")) {
+            cloneUrl.replace("https://", "https://${token}@")
+        } else {
+            cloneUrl
+        }
+
+        val gitPath = File(filesDir, "git-core/git").absolutePath
+        val nativeDir = applicationInfo.nativeLibraryDir
+        val libDir = File(filesDir, "lib")
+        val ldPath = "$nativeDir:${libDir.absolutePath}"
+
+        val pb = ProcessBuilder(gitPath, "clone", "--progress", url, projectDir.absolutePath).apply {
+            redirectErrorStream(true)
+            environment().apply {
+                put("LD_LIBRARY_PATH", ldPath)
+                put("GIT_EXEC_PATH", File(filesDir, "git-core").absolutePath)
+                put("GIT_SSL_CAINFO", "${filesDir.absolutePath}/tls/cert.pem")
+                put("HOME", filesDir.absolutePath)
+                put("TMPDIR", cacheDir.absolutePath)
+                if (token != null) {
+                    put("GIT_TERMINAL_PROMPT", "0")
+                    put("GCM_INTERACTIVE", "never")
+                }
+            }
+        }
+
+        val process = pb.start()
+        process.inputStream.bufferedReader().use { reader ->
+            var line = reader.readLine()
+            while (line != null) {
+                onLine(line)
+                line = reader.readLine()
+            }
+        }
+        val exit = process.waitFor()
+
+        return if (exit == 0) {
+            Project(
+                id = id,
+                name = name,
+                path = projectDir.absolutePath,
+                cloneUrl = cloneUrl,
+                source = if (token != null) "github" else "url"
+            )
+        } else {
+            projectDir.deleteRecursively()
+            null
+        }
+    }
+
     // --- Testar Git ---
 
     private fun handleTestGitClick() {
@@ -156,7 +409,6 @@ class MainActivity : AppCompatActivity() {
                     output.appendLine()
 
                     writeGitConfig(name, email)
-
                     runGitTests(output, name, email)
                 }
             } catch (e: Exception) {
@@ -269,6 +521,7 @@ class MainActivity : AppCompatActivity() {
             environment().apply {
                 put("LD_LIBRARY_PATH", ldPath)
                 put("GIT_EXEC_PATH", File(filesDir, "git-core").absolutePath)
+                put("GIT_SSL_CAINFO", "${filesDir.absolutePath}/tls/cert.pem")
                 put("HOME", filesDir.absolutePath)
                 put("TMPDIR", cacheDir.absolutePath)
             }
