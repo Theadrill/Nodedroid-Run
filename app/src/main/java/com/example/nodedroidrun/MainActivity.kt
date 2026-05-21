@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -187,13 +188,31 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(android.graphics.Color.parseColor("#1A1A1A"))
         }
 
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+
         val nameView = TextView(this).apply {
             text = project.name
             textSize = 15f
             setTextColor(android.graphics.Color.parseColor("#E8E8E8"))
             typeface = android.graphics.Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        card.addView(nameView)
+        topRow.addView(nameView)
+
+        val playBtn = TextView(this).apply {
+            text = "▶"
+            textSize = 18f
+            setTextColor(android.graphics.Color.parseColor("#4CAF50"))
+            setPadding(24.dp, 8.dp, 8.dp, 8.dp)
+            val outValue = android.util.TypedValue()
+            theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)
+            setBackgroundResource(outValue.resourceId)
+        }
+        topRow.addView(playBtn)
+        card.addView(topRow)
 
         val metaView = TextView(this).apply {
             text = "${project.source.uppercase()} · ${project.cloneUrl}"
@@ -206,6 +225,22 @@ class MainActivity : AppCompatActivity() {
             ).apply { topMargin = 4.dp }
         }
         card.addView(metaView)
+
+        playBtn.setOnClickListener { view ->
+            val popup = PopupMenu(this, view, android.view.Gravity.END)
+            popup.menu.add("npm install")
+            popup.menu.add("npm start")
+            popup.menu.add("Gerenciar comandos")
+            popup.setOnMenuItemClickListener { item ->
+                when (item.title.toString()) {
+                    "npm install" -> runProjectCommand(project, "npm install")
+                    "npm start"   -> runProjectCommand(project, "npm start")
+                    "Gerenciar comandos" -> Toast.makeText(this, "Em breve — Dashboard", Toast.LENGTH_SHORT).show()
+                }
+                true
+            }
+            popup.show()
+        }
 
         card.setOnClickListener {
             Toast.makeText(this, "Abrindo: ${project.name}", Toast.LENGTH_SHORT).show()
@@ -229,13 +264,54 @@ class MainActivity : AppCompatActivity() {
         return card
     }
 
+    private fun runProjectCommand(project: Project, label: String) {
+        val nativeDir = applicationInfo.nativeLibraryDir
+        val libDir = File(filesDir, "lib")
+        val ldPath = "$nativeDir:${libDir.absolutePath}"
+        val workDir = File(project.path)
+
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle(project.name)
+            .setMessage("Executando: $label...")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
+
+        lifecycleScope.launch {
+            val output = StringBuilder()
+            try {
+                withContext(Dispatchers.IO) {
+                    val pb = ProcessBuilder("sh", "-c", "cd \"${workDir.absolutePath}\" && $label 2>&1").apply {
+                        directory(workDir)
+                        redirectErrorStream(true)
+                        environment().apply {
+                            put("LD_LIBRARY_PATH", ldPath)
+                            put("PATH", "$nativeDir:${get("PATH") ?: "/system/bin"}")
+                            put("HOME", filesDir.absolutePath)
+                            put("TMPDIR", cacheDir.absolutePath)
+                        }
+                    }
+                    val process = pb.start()
+                    output.append(process.inputStream.bufferedReader().readText().trim())
+                    process.waitFor()
+                }
+            } catch (e: Exception) {
+                output.append("\nERRO: ${e.message}")
+            }
+            withContext(Dispatchers.Main) {
+                progressDialog.dismiss()
+                showOutputDialog("$label — ${project.name}", output.toString().ifEmpty { "(sem saída)" })
+            }
+        }
+    }
+
     private val Int.dp: Int get() = (this * resources.displayMetrics.density).toInt()
 
     // --- Adicionar Projeto ---
 
     private fun handleAddProjectClick() {
         val items = if (GitHubOAuth.isLoggedIn(this)) {
-            arrayOf("Clonar do GitHub (com token)", "Clonar via URL HTTP (sem token)")
+            arrayOf("Clonar do GitHub (lista de repositórios)", "Clonar via URL HTTP")
         } else {
             arrayOf("Clonar via URL HTTP")
         }
@@ -243,13 +319,76 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Adicionar Projeto")
             .setItems(items) { _, which ->
-                val useToken = GitHubOAuth.isLoggedIn(this) && which == 0
-                showCloneUrlDialog(useToken)
+                if (GitHubOAuth.isLoggedIn(this) && which == 0) {
+                    showGitHubRepoList()
+                } else {
+                    showCloneUrlDialog()
+                }
             }
             .show()
     }
 
-    private fun showCloneUrlDialog(useToken: Boolean) {
+    private fun showGitHubRepoList() {
+        val progress = AlertDialog.Builder(this)
+            .setMessage("Carregando repositórios...")
+            .setCancelable(false)
+            .create()
+        progress.show()
+
+        lifecycleScope.launch {
+            val repos = withContext(Dispatchers.IO) {
+                GitHubOAuth.fetchRepos(this@MainActivity)
+            }
+            progress.dismiss()
+
+            if (repos.isEmpty()) {
+                Toast.makeText(this@MainActivity, "Nenhum repositório encontrado ou erro de conexão", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
+            val listLayout = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            val scrollView = ScrollView(this@MainActivity).apply {
+                addView(listLayout)
+            }
+
+            val dialog = AlertDialog.Builder(this@MainActivity)
+                .setTitle("Seus repositórios")
+                .setView(scrollView)
+                .setNegativeButton("Cancelar", null)
+                .create()
+
+            for (repo in repos) {
+                val item = TextView(this@MainActivity).apply {
+                    text = repo.fullName
+                    textSize = 14f
+                    setTextColor(android.graphics.Color.parseColor("#E8E8E8"))
+                    setPadding(24, 16, 24, 16)
+                    setOnClickListener {
+                        dialog.dismiss()
+                        startClone(repo.cloneUrl, useToken = true)
+                    }
+                }
+                listLayout.addView(item)
+                val divider = View(this@MainActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, 1
+                    )
+                    setBackgroundColor(android.graphics.Color.parseColor("#2A2A2A"))
+                }
+                listLayout.addView(divider)
+            }
+
+            try {
+                dialog.show()
+            } catch (_: Exception) {
+                Toast.makeText(this@MainActivity, "Erro ao abrir lista", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun showCloneUrlDialog() {
         val input = EditText(this).apply {
             hint = "https://github.com/usuario/repo.git"
             setTextColor(android.graphics.Color.parseColor("#E8E8E8"))
@@ -258,15 +397,13 @@ class MainActivity : AppCompatActivity() {
             setPadding(24, 16, 24, 16)
         }
 
-        val label = if (useToken) "URL do repositório GitHub:" else "URL do repositório:"
-
         AlertDialog.Builder(this)
-            .setTitle(label)
+            .setTitle("URL do repositório:")
             .setView(input)
             .setPositiveButton("Clonar") { _, _ ->
                 val url = input.text.toString().trim()
                 if (url.isNotEmpty()) {
-                    startClone(url, useToken)
+                    startClone(url, false)
                 }
             }
             .setNegativeButton("Cancelar", null)
@@ -536,9 +673,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showOutputDialog(title: String, message: String) {
+        val shortMsg = if (message.length > 2000) {
+            message.take(2000) + "\n\n... (truncado)"
+        } else {
+            message
+        }
+
         val scrollView = ScrollView(this).apply {
             val tv = TextView(context).apply {
-                text = message
+                text = shortMsg
                 textSize = 12f
                 setTextColor(android.graphics.Color.parseColor("#E8E8E8"))
                 setPadding(24, 24, 24, 24)
@@ -548,10 +691,18 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(android.graphics.Color.parseColor("#0D0D0D"))
         }
 
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setView(scrollView)
-            .setPositiveButton("OK", null)
-            .show()
+        try {
+            AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(scrollView)
+                .setPositiveButton("OK", null)
+                .show()
+        } catch (_: Exception) {
+            AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(shortMsg.take(500))
+                .setPositiveButton("OK", null)
+                .show()
+        }
     }
 }

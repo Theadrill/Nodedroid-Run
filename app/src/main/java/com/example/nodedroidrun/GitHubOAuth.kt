@@ -169,4 +169,37 @@ object GitHubOAuth {
             .remove(KEY_EMAIL)
             .apply()
     }
+
+    data class GitHubRepo(
+        val name: String,
+        val fullName: String,
+        val cloneUrl: String
+    )
+
+    suspend fun fetchRepos(context: Context): List<GitHubRepo> = withContext(Dispatchers.IO) {
+        val token = getToken(context) ?: return@withContext emptyList()
+        try {
+            val url = URL("https://api.github.com/user/repos?sort=updated&per_page=50")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.setRequestProperty("Authorization", "Bearer $token")
+            conn.setRequestProperty("Accept", "application/json")
+
+            val response = conn.inputStream.bufferedReader().readText()
+            conn.disconnect()
+
+            val json = org.json.JSONArray(response)
+            val repos = mutableListOf<GitHubRepo>()
+            for (i in 0 until json.length()) {
+                val repo = json.getJSONObject(i)
+                repos.add(GitHubRepo(
+                    name = repo.getString("name"),
+                    fullName = repo.getString("full_name"),
+                    cloneUrl = repo.getString("clone_url")
+                ))
+            }
+            repos
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
 }

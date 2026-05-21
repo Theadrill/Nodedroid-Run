@@ -17,12 +17,17 @@ object ProjectManager {
     fun load(context: Context): List<Project> {
         val file = File(context.filesDir, PROJECTS_FILE)
         if (!file.exists()) return emptyList()
-        val json = JSONArray(file.readText())
-        val list = mutableListOf<Project>()
-        for (i in 0 until json.length()) {
-            list.add(Project.fromJson(json.getJSONObject(i)))
+        return try {
+            val json = JSONArray(file.readText())
+            val list = mutableListOf<Project>()
+            for (i in 0 until json.length()) {
+                list.add(Project.fromJson(json.getJSONObject(i)))
+            }
+            list
+        } catch (_: Exception) {
+            file.delete()
+            emptyList()
         }
-        return list
     }
 
     fun save(context: Context, projects: List<Project>) {
