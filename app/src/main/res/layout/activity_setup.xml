@@ -108,6 +108,26 @@
 
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Log técnico (visível apenas em caso de erro) -->
+        <ScrollView
+            android:id="@+id/log_container"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="16dp"
+            android:visibility="gone"
+            android:background="#1A1A1A"
+            android:padding="12dp">
+
+            <TextView
+                android:id="@+id/txt_log"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FF6B6B"
+                android:textSize="11sp"
+                android:fontFamily="monospace" />
+        </ScrollView>
+
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

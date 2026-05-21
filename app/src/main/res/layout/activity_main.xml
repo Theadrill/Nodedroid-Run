@@ -1,109 +1,79 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/main_root"
+<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/drawer_layout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
     android:background="#0D0D0D">
 
-    <!-- Header -->
+    <!-- Conteúdo principal -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:background="#1A1A1A"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="12dp"
-        android:gravity="center_vertical">
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/txt_header_icon"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="⬡"
-            android:textColor="#5FA04E"
-            android:textSize="22sp"
-            android:layout_marginEnd="10dp"/>
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="NodeDroid Terminal"
-            android:textColor="#E8E8E8"
-            android:textSize="15sp"
-            android:fontFamily="monospace"/>
-
-        <TextView
-            android:id="@+id/txt_server_badge"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="● INICIANDO"
-            android:textColor="#888888"
-            android:textSize="11sp"
-            android:fontFamily="monospace"/>
-    </LinearLayout>
-
-    <!-- Divisor -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#2A2A2A"/>
-
-    <!-- Terminal Output -->
-    <ScrollView
-        android:id="@+id/scroll_terminal"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:padding="12dp"
-        android:fillViewport="true">
-
-        <TextView
-            android:id="@+id/txt_terminal"
+        <!-- Header -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="#C8C8C8"
-            android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:lineSpacingMultiplier="1.4"
-            android:text=""/>
-    </ScrollView>
+            android:orientation="horizontal"
+            android:background="#1A1A1A"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="12dp">
 
-    <!-- Divisor -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#2A2A2A"/>
+            <TextView
+                android:id="@+id/btn_menu"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="☰"
+                android:textColor="#E8E8E8"
+                android:textSize="22sp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:padding="8dp" />
 
-    <!-- Status bar -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="#1A1A1A"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="8dp"
-        android:gravity="center_vertical">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:text="Nodedroid Run"
+                android:textColor="#E8E8E8"
+                android:textSize="16sp"
+                android:fontFamily="monospace" />
+        </LinearLayout>
 
-        <TextView
-            android:id="@+id/txt_status_bar"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Aguardando..."
-            android:textColor="#666666"
-            android:textSize="11sp"
-            android:fontFamily="monospace"/>
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#2A2A2A" />
 
-        <TextView
-            android:id="@+id/txt_port_badge"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="porta: 4150"
-            android:textColor="#444444"
-            android:textSize="11sp"
-            android:fontFamily="monospace"/>
+        <!-- Conteúdo central -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:text="Sua lista de projetos está vazia — adicione um repositório ou clone do GitHub."
+                android:textColor="#666666"
+                android:textSize="14sp"
+                android:lineSpacingExtra="4dp"
+                android:padding="32dp" />
+        </FrameLayout>
+
     </LinearLayout>
 
-</LinearLayout>
+    <!-- Menu Lateral -->
+    <com.google.android.material.navigation.NavigationView
+        android:id="@+id/nav_view"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:layout_gravity="start"
+        app:menu="@menu/drawer_menu"
+        app:headerLayout="@layout/nav_header" />
+
+</androidx.drawerlayout.widget.DrawerLayout>
