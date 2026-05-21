@@ -44,6 +44,9 @@ class SetupActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                // SIMULAÇÃO DE ERRO — remover após validar o comportamento
+                error("Falha simulada: libfoo.so não encontrado")
+
                 val nativeDir = File(applicationInfo.nativeLibraryDir)
                 val libDir = File(filesDir, "lib").also { it.mkdirs() }
 
