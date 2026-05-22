@@ -823,14 +823,6 @@ class MainActivity : AppCompatActivity() {
     private var termuxHost = "127.0.0.1"
     private var termuxPort = 9876
 
-    private fun isTermuxSetupDone(): Boolean {
-        return getSharedPreferences("nodedroid_setup", Context.MODE_PRIVATE).getBoolean("termux_setup_done", false)
-    }
-
-    private fun markTermuxSetupDone() {
-        getSharedPreferences("nodedroid_setup", Context.MODE_PRIVATE).edit().putBoolean("termux_setup_done", true).apply()
-    }
-
     private fun handleSetupTermuxClick() {
         val termuxInstalled = try { packageManager.getPackageInfo("com.termux", 0); true } catch (_: Exception) { false }
         if (!termuxInstalled) {
@@ -842,11 +834,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (isTermuxSetupDone()) {
-            checkTermuxStatus()
-        } else {
-            showTermuxGuide()
-        }
+        checkTermuxStatus()
     }
 
     private fun showTermuxGuide() {
@@ -1181,7 +1169,6 @@ class MainActivity : AppCompatActivity() {
 
                     withContext(Dispatchers.Main) {
                         progressDialog.dismiss()
-                        markTermuxSetupDone()
                         showOutputDialog("Setup Termux", table)
                     }
                     return@withContext
