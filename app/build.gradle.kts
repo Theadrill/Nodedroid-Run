@@ -51,6 +51,10 @@ android {
         }
     }
 
+    aaptOptions {
+        noCompress += listOf("zip")
+    }
+
     buildFeatures {
         buildConfig = true
     }

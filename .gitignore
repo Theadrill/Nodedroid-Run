@@ -16,3 +16,8 @@ local.properties
 
 # Pasta temporária de processamento dos binários do Termux (não versionar)
 binaries-temp/
+
+# JVM crash logs (gerados pelo Gradle/Kotlin daemon)
+hs_err_pid*
+replay_pid*
+java_pid*

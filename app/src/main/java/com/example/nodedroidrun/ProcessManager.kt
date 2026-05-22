@@ -122,6 +122,41 @@ object ProcessManager {
     }
 
     /**
+     * Monta o mapa de variáveis de ambiente para um processo.
+     * Inclui toolchain se instalado.
+     */
+    private fun buildEnv(context: Context, workDir: File?): Map<String, String> {
+        val binDir = getBinDir(context)
+        val libDir = File(context.filesDir, "lib")
+        val gitCoreDir = getGitCoreDir(context)
+        val selfBinDir = File(context.filesDir, "bin")
+        val projectBinDir = if (workDir != null) File(workDir, "node_modules/.bin") else null
+
+        val ldPathParts = mutableListOf("${binDir.absolutePath}", "${libDir.absolutePath}")
+        val pathParts = mutableListOf(
+            "${binDir.absolutePath}",
+            "${gitCoreDir.absolutePath}",
+            "${selfBinDir.absolutePath}"
+        )
+        if (projectBinDir != null) pathParts.add(projectBinDir.absolutePath)
+
+        pathParts.add(System.getenv("PATH") ?: "/system/bin")
+
+         val env = mapOf(
+             "LD_LIBRARY_PATH" to ldPathParts.joinToString(":"),
+             "PATH" to pathParts.joinToString(":"),
+             "HOME" to context.filesDir.absolutePath,
+             "TMPDIR" to context.cacheDir.absolutePath,
+             "NODE_PATH" to "${context.filesDir.absolutePath}/node_modules${if (workDir != null) ":${workDir.absolutePath}/node_modules" else ""}",
+             "GIT_EXEC_PATH" to gitCoreDir.absolutePath,
+             "GIT_SSL_CAINFO" to "${context.filesDir.absolutePath}/tls/cert.pem",
+             "CURL_CA_BUNDLE" to "${context.filesDir.absolutePath}/tls/cert.pem"
+         )
+         
+         return env
+    }
+
+    /**
      * Inicia um processo com as variáveis de ambiente corretas para os binários do Termux.
      * @param context  Contexto do Android para resolver os caminhos.
      * @param command  Comando completo a executar (ex: ["node", "server.js"]).
@@ -136,24 +171,10 @@ object ProcessManager {
         id: String
     ): Process? {
         return try {
-            val binDir  = getBinDir(context)
-            val libDir  = File(context.filesDir, "lib") // aliases versionados (libz.so.1 etc.)
             val pb = ProcessBuilder(command).apply {
                 directory(workDir)
                 redirectErrorStream(true)
-                environment().apply {
-                    // nativeLibraryDir: onde estão as libs principais (libnode.so, libssl.so...)
-                    // filesDir/lib: aliases versionados que o linker procura (libz.so.1, libssl.so.3...)
-                    val ldPath = "${binDir.absolutePath}:${libDir.absolutePath}"
-                    put("LD_LIBRARY_PATH", ldPath)
-                    put("PATH", "${binDir.absolutePath}:${get("PATH") ?: "/system/bin"}")
-                    put("HOME", context.filesDir.absolutePath)
-                    put("TMPDIR", context.cacheDir.absolutePath)
-                    put("NODE_PATH", "${context.filesDir.absolutePath}/node_modules")
-                    put("GIT_EXEC_PATH", "${context.filesDir.absolutePath}/git-core")
-                    put("GIT_SSL_CAINFO", "${context.filesDir.absolutePath}/tls/cert.pem")
-                    put("CURL_CA_BUNDLE", "${context.filesDir.absolutePath}/tls/cert.pem")
-                }
+                environment().putAll(buildEnv(context, workDir))
             }
             val process = pb.start()
             activeProcesses[id] = process

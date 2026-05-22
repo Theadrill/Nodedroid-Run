@@ -1,6 +1,7 @@
 package com.example.nodedroidrun
 
 import android.content.Intent
+import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -17,7 +18,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.navigation.NavigationView
+
 import kotlinx.coroutines.Dispatchers
+
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -64,6 +67,7 @@ class MainActivity : AppCompatActivity() {
             when (item.itemId) {
                 R.id.nav_login -> handleLoginClick()
                 R.id.nav_test_git -> handleTestGitClick()
+                R.id.nav_test_termux -> handleSetupTermuxClick()
                 R.id.nav_add_project -> handleAddProjectClick()
             }
             drawerLayout.close()
@@ -74,6 +78,9 @@ class MainActivity : AppCompatActivity() {
         refreshProjects()
 
         ProcessManager.ensureGitSymlinks(this)
+
+        ensureEnvShim()
+        ensureNodeShim()
 
         startService(Intent(this, NodeService::class.java))
 
@@ -282,11 +289,9 @@ class MainActivity : AppCompatActivity() {
     private fun runProjectCommand(project: Project, label: String) {
         val nativeDir = applicationInfo.nativeLibraryDir
         val libDir = File(filesDir, "lib")
-        val ldPath = "$nativeDir:${libDir.absolutePath}"
         val nodePath = File(nativeDir, "libnode.so").absolutePath
         val npmCliJs = File(filesDir, "node_modules/npm/bin/npm-cli.js").absolutePath
         val workDir = File(project.path)
-
         val gitPath = File(filesDir, "git-core/git").absolutePath
 
         val cmd: List<String> = when {
@@ -321,24 +326,46 @@ class MainActivity : AppCompatActivity() {
             val output = StringBuilder()
             try {
                 withContext(Dispatchers.IO) {
+                    val ldPath = "$nativeDir:${libDir.absolutePath}"
+                    val selfBin = File(filesDir, "bin").absolutePath
+                    val binPath = buildList {
+                        add(selfBin)
+                        add(nativeDir)
+                        add("${filesDir.absolutePath}/git-core")
+                        add("${workDir.absolutePath}/node_modules/.bin")
+                        add(System.getenv("PATH") ?: "/system/bin")
+                    }.joinToString(":")
+
+                    val ldPathFull = buildList {
+                        add(nativeDir)
+                        add(libDir.absolutePath)
+                        add("/system/lib64")
+                        add("/system/lib")
+                        add("/vendor/lib64")
+                        add("/vendor/lib")
+                    }.joinToString(":")
+
+                    val env = mapOf(
+                        "LD_LIBRARY_PATH" to ldPathFull,
+                        "PATH" to binPath,
+                        "HOME" to filesDir.absolutePath,
+                        "TMPDIR" to cacheDir.absolutePath,
+                        "NODE_PATH" to "${filesDir.absolutePath}/node_modules:${workDir.absolutePath}/node_modules",
+                        "GIT_EXEC_PATH" to "${filesDir.absolutePath}/git-core",
+                        "GIT_SSL_CAINFO" to "${filesDir.absolutePath}/tls/cert.pem",
+                        "CURL_CA_BUNDLE" to "${filesDir.absolutePath}/tls/cert.pem"
+                    )
+
                     val pb = ProcessBuilder(cmd).apply {
                         directory(workDir)
                         redirectErrorStream(true)
-                        environment().apply {
-                            put("LD_LIBRARY_PATH", ldPath)
-                            val binPath = "$nativeDir:${filesDir.absolutePath}/git-core:${workDir.absolutePath}/node_modules/.bin:${get("PATH") ?: "/system/bin"}"
-                            put("PATH", binPath)
-                            put("HOME", filesDir.absolutePath)
-                            put("TMPDIR", cacheDir.absolutePath)
-                            put("NODE_PATH", "${filesDir.absolutePath}/node_modules")
-                            put("GIT_EXEC_PATH", "${filesDir.absolutePath}/git-core")
-                            put("GIT_SSL_CAINFO", "${filesDir.absolutePath}/tls/cert.pem")
-                            put("CURL_CA_BUNDLE", "${filesDir.absolutePath}/tls/cert.pem")
-                        }
+                        environment().putAll(env)
                     }
                     val process = pb.start()
-                    output.append(process.inputStream.bufferedReader().readText().trim())
-                    process.waitFor()
+                    val text = process.inputStream.bufferedReader().readText().trim()
+                    val exit = process.waitFor()
+                    output.append(text)
+                    if (exit != 0) output.append("\n(exit: $exit)")
                 }
             } catch (e: Exception) {
                 output.append("\nERRO: ${e.message}")
@@ -791,9 +818,417 @@ class MainActivity : AppCompatActivity() {
         return output.ifEmpty { "(sem saída)" }
     }
 
+    // --- Setup Termux ---
+
+    private var termuxHost = "127.0.0.1"
+    private var termuxPort = 9876
+
+    private fun isTermuxSetupDone(): Boolean {
+        return getSharedPreferences("nodedroid_setup", Context.MODE_PRIVATE).getBoolean("termux_setup_done", false)
+    }
+
+    private fun markTermuxSetupDone() {
+        getSharedPreferences("nodedroid_setup", Context.MODE_PRIVATE).edit().putBoolean("termux_setup_done", true).apply()
+    }
+
+    private fun handleSetupTermuxClick() {
+        val termuxInstalled = try { packageManager.getPackageInfo("com.termux", 0); true } catch (_: Exception) { false }
+        if (!termuxInstalled) {
+            AlertDialog.Builder(this)
+                .setTitle("Termux não encontrado")
+                .setMessage("Instale o Termux via F-Droid para continuar.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        if (isTermuxSetupDone()) {
+            checkTermuxStatus()
+        } else {
+            showTermuxGuide()
+        }
+    }
+
+    private fun showTermuxGuide() {
+        val setupCmd = "echo y | termux-setup-storage && " +
+            "pkg update -y && " +
+            "pkg install -y busybox && " +
+            "echo '' && " +
+            "echo '==============================' && " +
+            "echo '  SERVIDOR PRONTO!' && " +
+            "echo '  Deixe este terminal aberto.' && " +
+            "echo '  Volte ao NodedroidRun e' && " +
+            "echo '  clique em Próximo passo.' && " +
+            "echo '==============================' && " +
+            "nc -lk -p 9876 -e /bin/bash"
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 24, 48, 16)
+        }
+
+        val guideText = TextView(this).apply {
+            text = "1. Copie o comando abaixo\n" +
+                "2. Abra o app Termux\n" +
+                "3. Cole o comando e pressione Enter\n" +
+                "4. Quando aparecer \"SERVIDOR PRONTO\"\n" +
+                "   o Termux está configurado\n" +
+                "5. Deixe o Termux aberto e volte aqui"
+            textSize = 14f
+            setTextColor(android.graphics.Color.parseColor("#E8E8E8"))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 16.dp }
+        }
+        container.addView(guideText)
+
+        val cmdRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 16.dp }
+        }
+
+        val cmdBox = EditText(this).apply {
+            setText(setupCmd)
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(android.graphics.Color.parseColor("#00FF00"))
+            setBackgroundColor(android.graphics.Color.parseColor("#0D0D0D"))
+            setPadding(16, 12, 16, 12)
+            isFocusable = false
+            inputType = android.text.InputType.TYPE_NULL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("termux_setup", setupCmd))
+                Toast.makeText(this@MainActivity, "Comando copiado!", Toast.LENGTH_SHORT).show()
+            }
+        }
+        cmdRow.addView(cmdBox)
+
+        val copyBtn = TextView(this).apply {
+            text = "📋"
+            textSize = 20f
+            setPadding(12.dp, 8.dp, 4.dp, 8.dp)
+            setOnClickListener {
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("termux_setup", setupCmd))
+                Toast.makeText(this@MainActivity, "Comando copiado!", Toast.LENGTH_SHORT).show()
+            }
+        }
+        cmdRow.addView(copyBtn)
+        container.addView(cmdRow)
+
+        AlertDialog.Builder(this)
+            .setTitle("Setup Termux — Passo 1")
+            .setView(container)
+            .setPositiveButton("Próximo passo") { _, _ ->
+                val progressDialog = AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Setup Termux")
+                    .setMessage("Verificando conexão com o Termux...")
+                    .setCancelable(false)
+                    .create()
+                progressDialog.show()
+
+                lifecycleScope.launch {
+                    var connected = false
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val s = java.net.Socket(termuxHost, termuxPort)
+                            s.close()
+                            connected = true
+                        }
+                    } catch (_: Exception) {}
+
+                    withContext(Dispatchers.Main) {
+                        progressDialog.dismiss()
+                        if (connected) {
+                            runTermuxSetup()
+                        } else {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Servidor não encontrado")
+                                .setMessage("Não foi possível conectar ao Termux na porta 9876.\n\nCertifique-se de que o comando foi executado e o terminal mostra:\n\n  SERVIDOR PRONTO!\n\nTente novamente.")
+                                .setPositiveButton("Tentar novamente") { _, _ -> runTermuxSetup() }
+                                .setNegativeButton("Voltar", null)
+                                .show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun checkTermuxStatus() {
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle("Setup Termux")
+            .setMessage("Checando servidor...")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
+
+        lifecycleScope.launch {
+            val lines = mutableListOf<String>()
+            val summary = mutableListOf<String>()
+
+            fun update(msg: String) {
+                lines.add(msg)
+                runOnUiThread { progressDialog.setMessage(lines.joinToString("\n")) }
+            }
+
+            try {
+                withContext(Dispatchers.IO) {
+                    fun tcpExec(cmd: String, timeout: Int = 15000): String {
+                        val socket = java.net.Socket(termuxHost, termuxPort)
+                        socket.soTimeout = timeout
+                        val writer = socket.getOutputStream().bufferedWriter()
+                        val reader = socket.getInputStream().bufferedReader()
+                        writer.write(cmd)
+                        writer.newLine()
+                        writer.write("echo '___END___'")
+                        writer.newLine()
+                        writer.flush()
+                        val sb = StringBuilder()
+                        var line = reader.readLine()
+                        while (line != null) {
+                            if (line.contains("___END___")) break
+                            sb.appendLine(line)
+                            line = reader.readLine()
+                        }
+                        socket.close()
+                        return sb.toString().trim()
+                    }
+
+                    // Check 1: servidor
+                    try {
+                        tcpExec("echo OK")
+                        update("✅ Servidor ligado na porta $termuxPort")
+                        summary.add("✅ Servidor ligado na porta $termuxPort")
+                    } catch (e: java.net.ConnectException) {
+                        update("❌ Servidor NÃO encontrado na porta $termuxPort")
+                        summary.add("❌ Servidor NÃO encontrado na porta $termuxPort")
+                        withContext(Dispatchers.Main) {
+                            progressDialog.dismiss()
+                            showTermuxGuide()
+                        }
+                        return@withContext
+                    }
+
+                    // Check 2: pacotes
+                    update("Checando pacotes necessários...")
+                    val checkCmd = "echo 'NODE='$(node --version 2>&1);" +
+                        "echo 'NPM='$(npm --version 2>&1);" +
+                        "echo 'PYTHON='$(python3 --version 2>&1);" +
+                        "echo 'CLANG='$(clang --version 2>&1 | head -1);" +
+                        "echo 'MAKE='$(make --version 2>&1 | head -1);" +
+                        "echo 'BINUTILS='$(ld --version 2>&1 | head -1)"
+
+                    val output = tcpExec(checkCmd)
+                    val missing = mutableListOf<String>()
+                    val pkgs = mapOf("NODE" to "nodejs", "NPM" to "nodejs", "PYTHON" to "python3", "CLANG" to "clang", "MAKE" to "make", "BINUTILS" to "binutils")
+                    val foundPkgs = mutableSetOf<String>()
+
+                    for (line in output.lines()) {
+                        val parts = line.split("=", limit = 2)
+                        if (parts.size == 2) {
+                            val key = parts[0]
+                            val version = parts[1].trim()
+                            val pkg = pkgs[key]
+                            if (version.isNotBlank() && !version.contains("not found", true) && pkg != null) {
+                                foundPkgs.add(pkg)
+                            }
+                        }
+                    }
+                    for (pkg in pkgs.values) {
+                        if (pkg !in foundPkgs) missing.add(pkg)
+                    }
+
+                    if (missing.isNotEmpty()) {
+                        update("⚠️ Pacotes faltando: ${missing.joinToString(", ")}")
+                        update("Instalando automaticamente...")
+                        val installCmd = "pkg install -y ${missing.joinToString(" ")} 2>&1"
+                        tcpExec(installCmd, timeout = 300000)
+                        update("✅ Pacotes instalados")
+                    }
+
+                    update("✅ Pacotes necessários instalados")
+                    summary.add("✅ Pacotes necessários instalados")
+                    summary.add("")
+                    summary.add("A configuração do Termux foi feita com sucesso!")
+                    summary.add("Mantenha-o aberto executando em segundo plano.")
+                }
+            } catch (e: Exception) {
+                update("ERRO: ${e.message}")
+            }
+
+            withContext(Dispatchers.Main) {
+                progressDialog.dismiss()
+                val finalMsg = summary.joinToString("\n")
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Setup Termux")
+                    .setMessage(finalMsg)
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun runTermuxSetup() {
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle("Setup Termux")
+            .setMessage("Conectando...")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
+
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val logLines = mutableListOf<String>()
+
+                    fun updateDialog(text: String) {
+                        logLines.add(text)
+                        // Keep last 12 lines visible
+                        val display = logLines.takeLast(12).joinToString("\n")
+                        runOnUiThread {
+                            progressDialog.setMessage(display.ifEmpty { "..." })
+                        }
+                    }
+
+                    fun tcpExec(cmd: String, onLine: (String) -> Unit) {
+                        val socket = java.net.Socket(termuxHost, termuxPort)
+                        socket.soTimeout = 300000
+                        val writer = socket.getOutputStream().bufferedWriter()
+                        val reader = socket.getInputStream().bufferedReader()
+                        writer.write(cmd)
+                        writer.newLine()
+                        writer.write("echo '___END___'")
+                        writer.newLine()
+                        writer.flush()
+                        var line = reader.readLine()
+                        while (line != null) {
+                            if (line.contains("___END___")) break
+                            onLine(line)
+                            line = reader.readLine()
+                        }
+                        socket.close()
+                    }
+
+                    // Testa conexão
+                    updateDialog("Conectando ao Termux...")
+                    try {
+                        tcpExec("echo OK") { }
+                    } catch (e: java.net.ConnectException) {
+                        runOnUiThread {
+                            progressDialog.dismiss()
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Erro")
+                                .setMessage("Não foi possível conectar ao Termux.\n\nExecute no Termux e mantenha rodando:\n\n  nc -lk -p 9876 -e /bin/bash")
+                                .setPositiveButton("OK", null)
+                                .show()
+                        }
+                        return@withContext
+                    }
+
+                    // Instala dependências
+                    val installCmd = "pkg update -y 2>&1 && pkg install -y nodejs python3 clang make binutils busybox 2>&1"
+                    updateDialog("Instalando dependências...")
+
+                    tcpExec(installCmd) { line ->
+                        updateDialog(line)
+                    }
+
+                    // Verifica instalação
+                    updateDialog("Verificando...")
+                    val verifyResults = mutableMapOf<String, String>()
+                    val verifyCmd = "echo 'NODE='$(node --version 2>&1);" +
+                        "echo 'NPM='$(npm --version 2>&1);" +
+                        "echo 'PYTHON='$(python3 --version 2>&1 | sed 's/Python //');" +
+                        "echo 'CLANG='$(clang --version 2>&1 | head -1 | grep -o '[0-9.]\\+' | head -1);" +
+                        "echo 'MAKE='$(make --version 2>&1 | head -1 | grep -o '[0-9.]\\+' | head -1);" +
+                        "echo 'BINUTILS='$(ld --version 2>&1 | head -1 | grep -o '[0-9.]\\+' | head -1)"
+
+                    tcpExec(verifyCmd) { line ->
+                        val parts = line.split("=", limit = 2)
+                        if (parts.size == 2) {
+                            verifyResults[parts[0]] = parts[1]
+                        }
+                    }
+
+                    // Monta tabela de resultados
+                    fun pad(s: String, len: Int) = (s + " ".repeat(len)).take(len)
+                    val table = buildString {
+                        appendLine("╔════════════╤═══════════════╤══════╗")
+                        appendLine("║ Ferramenta │ Versão        │  OK  ║")
+                        appendLine("╠════════════╪═══════════════╪══════╣")
+                        fun row(name: String, version: String?) {
+                            val v = version?.trim() ?: ""
+                            val ok = v.isNotBlank() && !v.contains("nao", true) && v != "—"
+                            appendLine("║ " + pad(name, 10) + " │ " + pad(v.take(13), 13) + " │ " + (if (ok) " ✅ " else " ❌ ") + " ║")
+                        }
+                        row("Node.js", verifyResults["NODE"])
+                        row("npm", verifyResults["NPM"])
+                        row("Python", verifyResults["PYTHON"])
+                        row("Clang", verifyResults["CLANG"])
+                        row("Make", verifyResults["MAKE"])
+                        row("Binutils", verifyResults["BINUTILS"])
+                        appendLine("╚════════════╧═══════════════╧══════╝")
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        progressDialog.dismiss()
+                        markTermuxSetupDone()
+                        showOutputDialog("Setup Termux", table)
+                    }
+                    return@withContext
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    progressDialog.dismiss()
+                    showOutputDialog("Setup Termux", "ERRO: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun ensureEnvShim() {
+        val binDir = File(filesDir, "bin").also { it.mkdirs() }
+        val envShim = File(binDir, "env")
+        if (!envShim.exists()) {
+            envShim.writeText("""#!/system/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    *=*) shift ;;
+    *) break ;;
+  esac
+done
+[ $# -gt 0 ] && exec "$@"
+""")
+            envShim.setExecutable(true)
+        }
+    }
+
+    private fun ensureNodeShim() {
+        val binDir = File(filesDir, "bin").also { it.mkdirs() }
+        val link = File(binDir, "node")
+        val target = File(applicationInfo.nativeLibraryDir, "libnode_shim.so")
+        if (target.exists() && !link.exists()) {
+            try {
+                java.nio.file.Files.createSymbolicLink(link.toPath(), target.toPath())
+            } catch (_: Exception) {
+                target.copyTo(link, overwrite = true)
+                link.setExecutable(true)
+            }
+        }
+    }
+
     private fun showOutputDialog(title: String, message: String) {
-        val shortMsg = if (message.length > 2000) {
-            message.take(2000) + "\n\n... (truncado)"
+        val shortMsg = if (message.length > 20000) {
+            message.take(20000) + "\n\n... (truncado)"
         } else {
             message
         }
@@ -805,6 +1240,7 @@ class MainActivity : AppCompatActivity() {
                 setTextColor(android.graphics.Color.parseColor("#E8E8E8"))
                 setPadding(24, 24, 24, 24)
                 typeface = android.graphics.Typeface.MONOSPACE
+                setTextIsSelectable(true)
             }
             addView(tv)
             setBackgroundColor(android.graphics.Color.parseColor("#0D0D0D"))

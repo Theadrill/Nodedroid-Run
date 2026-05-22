@@ -7,6 +7,9 @@
         android:id="@+id/nav_test_git"
         android:title="Testar Git" />
     <item
+        android:id="@+id/nav_test_termux"
+        android:title="Setup Termux" />
+    <item
         android:id="@+id/nav_add_project"
         android:title="Adicionar Projeto" />
 </menu>

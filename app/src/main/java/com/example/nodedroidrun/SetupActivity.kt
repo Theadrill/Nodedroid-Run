@@ -1,5 +1,6 @@
 package com.example.nodedroidrun
 
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -28,8 +29,21 @@ class SetupActivity : AppCompatActivity() {
 
     private val SERVER_PORT = 4150
 
+    companion object {
+        private const val PREFS_NAME = "nodedroid_setup"
+        private const val PREFS_SETUP_DONE = "setup_done"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(PREFS_SETUP_DONE, false)) {
+            startActivity(Intent(this, MainActivity::class.java))
+            finish()
+            return
+        }
+
         setContentView(R.layout.activity_setup)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
         window.statusBarColor = android.graphics.Color.parseColor("#FF1A1A1A")
@@ -114,6 +128,8 @@ class SetupActivity : AppCompatActivity() {
                 runOnUiThread {
                     txtStatus.text  = "Ambiente pronto!"
                     txtDetails.text = "Iniciando..."
+                    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                        .putBoolean(PREFS_SETUP_DONE, true).apply()
                     startActivity(Intent(this@SetupActivity, MainActivity::class.java))
                     finish()
                 }

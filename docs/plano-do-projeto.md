@@ -406,7 +406,10 @@ filesDir/
 *   [x] Comandos generalizados (node, git, npm, npx) com PATH expandido para node_modules/.bin e git-core.
 *   [x] Corrigido: symlinks git-core recriados em toda inicialização (ensureGitSymlinks), resolvendo ENOENT após update do APK.
 *   [x] Corrigido: `--scripts-prepend-node-path=true` removido (deprecado no npm v11+).
-*   [ ] Toolchain C/C++ (gcc, make, python, coreutils) para suporte a node-gyp — EM IMPLEMENTAÇÃO.
+*   [x] **Integração Termux via TCP:** Comunicação implementada por socket no localhost (127.0.0.1:9876). O Termux atua como servidor de comandos (netcat + bash), o app envia comandos e recebe respostas. Setup automático de nodejs, python3, clang, make, binutils via `pkg install`.
+  *   Fluxo do usuário: `termux-setup-storage` → `pkg install busybox` → `nc -lk -p 9876 -e /bin/bash` → app clica "Setup Termux".
+  *   [ ] **Automatizar inicialização do servidor TCP:** Futuramente, gerar script de boot no Termux (:boot) ou usar tmux para manter o servidor sempre ativo sem intervenção do usuário.
+  *   [ ] **npm install via Termux:** Implementar envio do projeto para o Termux processar `npm install` + `node-gyp rebuild` e retornar `node_modules` compilado.
 *   [ ] Abas de terminais independentes por projeto (`TabLayout` + `ViewPager2`).
 *   [ ] Painel Git: parsing de `git status --porcelain` para popular `RecyclerView`.
 *   [ ] Ações: `git add`, `git commit`, `git push`, `git pull`, revert por arquivo.
@@ -421,6 +424,9 @@ filesDir/
 *   **Editor de Texto Integrado:** Implementação de um editor Monaco/CodeMirror para permitir edições de código diretamente no app.
 *   **Suporte a Git via SSH:** Alternativa ao OAuth para autenticação via chave SSH.
 *   **Detecção de Pacotes Nativos Incompatíveis:** O terminal deve detectar falhas do `node-gyp` e sugerir alternativas JavaScript puras (ex: `sql.js` em vez de `sqlite3`).
+*   **[ALTERNATIVA] Delegação ao Termux para npm install / node-gyp:**
+  *   **Status: IMPLEMENTADO via TCP (21/05/2026).** Comunicação por socket no localhost (127.0.0.1:9876). Netcat + bash no Termux, app conecta via TCP e envia comandos. Setup automático instala nodejs, python3, clang, make. Próximo passo: integrar ao fluxo de `npm install` nos projetos.
+  *   Fluxo: App copia projeto para `/sdcard/`, envia comando ao Termux via TCP, Termux executa `npm install` em ambiente Linux real, app recolhe o resultado. Zero patches, zero linker64.
 
 ---
 
@@ -433,3 +439,19 @@ filesDir/
 - 2026-05-21: Botão play (▶) nos cards de projeto com PopupMenu (npm install, npm start, Gerenciar comandos). Lista de repositórios do GitHub ao clonar (fetchRepos via /user/repos). Corrigido crash #0x101045c (selectableItemBackground via attribute, não drawable).
 - 2026-05-21: NodedroidJson.kt — Gerenciar Comandos funcional (adicionar/excluir comandos, salvos em nodedroid.json no diretório do projeto). Comandos generalizados: handlers explícitos para `node`, `git` + PATH expandido (git-core, node_modules/.bin). GIT_EXEC_PATH/GIT_SSL_CAINFO agora injetados em todos os branches do runProjectCommand. Corrigido `--scripts-prepend-node-path` (deprecado no npm v11+).
 - 2026-05-21: ensureGitSymlinks() no ProcessManager — recria symlinks do git-core em toda inicialização, resolvendo ENOENT após update do APK (nativeLibraryDir muda entre versões). Chamado de SetupActivity e MainActivity.onCreate.
+- 2026-05-21: Integração Termux via TCP — abandonada tentativa de npm install nativo (bugs em linker64, libandroid-support, deduplicate, ELF wrappers). Implementada comunicação TCP no localhost (127.0.0.1:9876) com netcat+bash no Termux. Botão "Setup Termux" instala nodejs, python3, clang, make, binutils, busybox. README documenta passo a passo do usuário. Próximo: integrar ao fluxo de npm install dos projetos.
+- 2026-05-21: Limpeza pós-Termux — removida toda a abordagem antiga de npm install nativo: `ToolchainInstaller.kt` (430 linhas), `toolchain-aarch64.zip` (165MB), `libandroid-support.so`, `libnode_gyp_shim.so`, `libnode_script_runner.so`. Removidos patches de `configure.js`/`find-python.js`, lógica de `fixPythonSymlinks`, `createElfWrappers`, `deduplicate`, `ensureNdkLibraries`, `moveModulesFromTmp`, `setupToolchain`. Mantido apenas o necessário para Node.js + Git + npm CLI + Termux TCP. `runProjectCommand` simplificado de ~260 para ~70 linhas. `MainActivity.kt` perdeu ~200 linhas. App ficou mais leve e focado.
+
+### O que deu errado na abordagem nativa (lições aprendidas):
+
+1. **`libandroid-support.so` ausente no Android 14**: O Python 3.13 da toolchain foi compilado com NDK que depende dessa lib, mas o Android 14 removeu-a do sistema. Baixamos do Termux (20KB) e bundlamos, mas era só o começo dos problemas.
+
+2. **`deduplicate` criava symlinks self-referencing**: Bug no cálculo de `relativize` fazia symlinks apontarem para si mesmos (ex: `clang -> clang`), corrompendo os binários. Corrigido, mas a toolchain já estava danificada.
+
+3. **ELF binaries sem permissão de execução**: No Android, `setExecutable(true)` do Java não funciona para arquivos extraídos no storage interno. Binários ELF precisam ser carregados via `/system/bin/linker64`. Criamos wrappers shell script, mas isso gerou wrapper duplo no python (já wrapped pelo patch do configure.js).
+
+4. **Python `*-config` são shell scripts, não ELF**: O patch do `configure.js` aplicava `linker64` também nos scripts `python3.13-config`, quebrando com "bad ELF magic".
+
+5. **Comunicação inter-processo complexa**: Cada problema resolvido revelava outro. A abordagem de rodar C/C++ toolchain dentro do ambiente restrito do Android sem root é extremamente frágil — o Termux resolve tudo isso por ter um ambiente Linux real.
+
+6. **Tentativa frustrada de intents (`com.termux.RUN_COMMAND`)**: O `am startservice` até iniciava o serviço mas o comando não executava. Faltava permissão `com.termux.permission.RUN_COMMAND` e `allow-external-apps=true`. Mesmo configurado, falhou. Só funcionou com TCP puro.
